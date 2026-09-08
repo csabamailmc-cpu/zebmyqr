@@ -10,9 +10,14 @@
   ===================================================================
 
   MUKODES
-    A kamera kepet folyamatosan vizsgalja. Ha sikerul dekodolni, a kod
-    tartalma megjelenik egy szovegdobozban; az OK gomb megnyomasa utan
-    a doboz eltunik es a keresés folytatodik.
+    A kamera kepet folyamatosan vizsgalja. Ha sikerul dekodolni:
+      - megszolal egy 440 Hz-es hang (alapbeallitas: 3,5 masodperc)
+      - a keszulek rezeg egyet
+      - a kod tartalma megjelenik egy szovegdobozban
+    Az OK gomb megnyomasa a hangot azonnal elhallgattatja, a doboz
+    eltunik, es a kereses folytatodik.
+    A hang frekvenciaja, hossza es hangereje a szkript elejen allithato
+    (BEEP_HZ, BEEP_SEC, BEEP_VOL).
 
   FONTOS -- HTTPS KELL, MINDEN BONGESZOBEN!
     A getUserMedia (kamera) a webszabvany szerint csak "biztonsagos
@@ -170,6 +175,98 @@
 (function () {
   "use strict";
 
+  /* ===================================================================
+     HANGJELZES A SIKERES FELISMERESKOR
+     -------------------------------------------------------------------
+     BEEP_HZ    a hang frekvenciaja Hz-ben (440 = normal A hang)
+     BEEP_SEC   a hang hossza masodpercben
+     BEEP_VOL   hangero 0.0 es 1.0 kozott
+
+     A hang mindenkeppen elhallgat, amint megnyomod az OK gombot.
+
+     FONTOS -- iOS KORLATOZAS:
+     A Safari (es minden iOS-es bongeszo) CSAK felhasznaloi erintes utan
+     enged hangot lejatszani. Ezert a lap az elso erintesre "feloldja" a
+     hangkimenetet. Ha a legelso beolvasas nema, koppints egyet a
+     kepernyore, es onnantol szolni fog.
+     =================================================================== */
+  var BEEP_HZ  = 440;
+  var BEEP_SEC = 3.5;
+  var BEEP_VOL = 0.25;
+
+  /* ===================================================================
+     UJRA-FELISMERES ELLENI VEDELEM
+     -------------------------------------------------------------------
+     Ha az OK utan ugyanaz a kod meg a kamera elott van, a program
+     azonnal ujra felismerne -- vegtelen korbe kerulne. Ezert:
+       COOLDOWN_MS    az OK utan ennyi ideig egyaltalan nem keresunk
+       SAME_IGNORE_MS eddig figyelmen kivul hagyjuk UGYANAZT a szoveget
+                      (mas kod persze azonnal felismerheto)
+     Allitsd SAME_IGNORE_MS = 0 -ra, ha ugyanazt a kodot tobbszor
+     egymas utan is be akarod olvasni.
+     =================================================================== */
+  var COOLDOWN_MS    = 700;
+  var SAME_IGNORE_MS = 4000;
+
+  var cooldownUntil = 0;
+  var lastHitText   = null;
+  var lastHitTime   = 0;
+
+  var actx = null, beepOsc = null, beepGain = null;
+
+  function audioUnlock() {
+    if (actx) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try {
+      actx = new AC();
+      /* nema, nagyon rovid hang: ez oldja fel az iOS hangkimenetet */
+      var o = actx.createOscillator(), g = actx.createGain();
+      g.gain.value = 0.0001;
+      o.connect(g); g.connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + 0.01);
+    } catch (e) { actx = null; }
+  }
+
+  function beepStop() {
+    if (!beepOsc) return;
+    try {
+      var t = actx.currentTime;
+      beepGain.gain.cancelScheduledValues(t);
+      beepGain.gain.setValueAtTime(beepGain.gain.value, t);
+      beepGain.gain.linearRampToValueAtTime(0.0001, t + 0.03);
+      beepOsc.stop(t + 0.04);
+    } catch (e) {}
+    beepOsc = null; beepGain = null;
+  }
+
+  function beepStart() {
+    if (!actx) return;
+    if (actx.state === 'suspended') { try { actx.resume(); } catch (e) {} }
+    beepStop();
+    try {
+      var t = actx.currentTime;
+      beepOsc  = actx.createOscillator();
+      beepGain = actx.createGain();
+      beepOsc.type = 'sine';
+      beepOsc.frequency.setValueAtTime(BEEP_HZ, t);
+      /* lagy be- es kihangositas, hogy ne pattanjon a hangszoro */
+      beepGain.gain.setValueAtTime(0.0001, t);
+      beepGain.gain.exponentialRampToValueAtTime(BEEP_VOL, t + 0.02);
+      beepGain.gain.setValueAtTime(BEEP_VOL, t + BEEP_SEC - 0.05);
+      beepGain.gain.exponentialRampToValueAtTime(0.0001, t + BEEP_SEC);
+      beepOsc.connect(beepGain); beepGain.connect(actx.destination);
+      beepOsc.start(t);
+      beepOsc.stop(t + BEEP_SEC + 0.02);
+      beepOsc.onended = function () { beepOsc = null; beepGain = null; };
+    } catch (e) { beepOsc = null; beepGain = null; }
+  }
+
+  /* az elso erintes/kattintas feloldja a hangot (iOS kovetelmeny) */
+  ['touchstart', 'click'].forEach(function (ev) {
+    document.addEventListener(ev, audioUnlock, { once: false, passive: true });
+  });
+
   var video   = document.getElementById('v');
   var panel   = document.getElementById('panel');
   var out     = document.getElementById('out');
@@ -183,6 +280,7 @@
   var paused  = false;       // amig a talalat lathato, nem keresunk
   var lastText = null;
   var scans = 0, hits = 0;
+  var fpsT0 = 0, fpsN = 0, fps = 0;   // valodi keresesi sebesseg
 
   // --- vaszon a kepkockak feldolgozasahoz ---
   var cv = document.createElement('canvas');
@@ -228,7 +326,7 @@
     wasmBusy = true;
     m.readBarcodes(imgData, { formats: ['QRCode'], tryHarder: true, maxNumberOfSymbols: 1 })
       .then(function (res) {
-        if (res && res.length && !paused) { hits++; show(res[0].text, 'zxing-wasm'); }
+        if (res && res.length && accept(res[0].text)) { hits++; show(res[0].text, 'zxing-wasm'); }
       })
       .catch(function () {})
       .then(function () { wasmBusy = false; });
@@ -237,8 +335,11 @@
   // --- C) jsQR ---
   function jsqrDecode(imgData) {
     if (!window.jsQR) return null;
+    /* 'dontInvert': a mi kodjaink mindig sotet-vilagos allasuak.
+       Az 'attemptBoth' zajos kepen MEGDUPLAZZA a koltseget
+       (merve: 952 ms helyett 2032 ms egy 480x480-as zajos kepen). */
     var r = window.jsQR(imgData.data, imgData.width, imgData.height,
-                        { inversionAttempts: 'attemptBoth' });
+                        { inversionAttempts: 'dontInvert' });
     return r ? r.data : null;
   }
 
@@ -254,30 +355,47 @@
     return d;
   }
 
-  // Egy kepkocka: tobb valtozatot probal, tobb dekodoloval.
-  // Sorrend: a gyorsabb/jobb elol, hogy a tobbi ne is kelljen.
+  /* ===================================================================
+     TELJESITMENY -- MIERT EGY VALTOZAT KEPKOCKANKENT?
+     -------------------------------------------------------------------
+     Meres (Node, 480x480-as kep, jsQR):
+        sima/ures kep     58 ms
+        QR-szeru minta    78 ms
+        zajos kep       2032 ms   <-- ez a veszelyes eset
+     Ha kepkockankent mind a 4 kepvaltozatot vegigprobalnank ket
+     szinkron dekodoloval, az 8 hivas = akar 0,5 mp is lehetne egy
+     kepkockara. Ezert kepkockankent CSAK EGY valtozatot probalunk,
+     korbeforgatva. Igy negy kepkocka alatt mindegyik sorra kerul,
+     de egyik sem blokkolja a felhasznaloi feluletet.
+     A zxing-wasm ettol fuggetlenul, aszinkron modon fut minden
+     kepkockan -- az a fo dekodolo, ezek csak tartalekok.
+     =================================================================== */
+  var variantIdx = 0;
   function tryDecode(full, center) {
-    var variants = [
-      ['teljes',            full],
-      ['közép',             center],
-      ['teljes+kontraszt',  boost(full)],
-      ['közép+kontraszt',   boost(center)]
+    var list = [
+      ['közép',            center],
+      ['teljes',           full],
+      ['közép+kontraszt',  null],   // lustan keszul, lasd lentebb
+      ['teljes+kontraszt', null]
     ];
-    for (var i = 0; i < variants.length; i++) {
-      var name = variants[i][0], img = variants[i][1];
-      if (!img) continue;
-      var t;
-      t = zxingDecode(img);  if (t) return { text: t, how: 'ZXing-js / ' + name };
-      t = jsqrDecode(img);   if (t) return { text: t, how: 'jsQR / ' + name };
-    }
+    var k = variantIdx % list.length;
+    variantIdx++;
+    var name = list[k][0], img = list[k][1];
+    if (img === null) img = boost(k === 2 ? center : full);
+    if (!img) return null;
+    var t;
+    t = zxingDecode(img);  if (t) return { text: t, how: 'ZXing-js / ' + name };
+    t = jsqrDecode(img);   if (t) return { text: t, how: 'jsQR / ' + name };
     return null;
   }
 
   function grab() {
     var w = video.videoWidth, h = video.videoHeight;
     if (!w || !h) return null;
-    // teljes kep, legfeljebb 640 px szeles (gyorsabb, es eleg)
-    var s = Math.min(1, 640 / w);
+    /* teljes kep, legfeljebb 480 px szeles. A merés szerint a
+       dekodolas koltsege a kepterulettel no, es 480 px-en a 15 mm-es
+       QR meg boven eleg reszletes. */
+    var s = Math.min(1, 480 / w);
     cv.width = Math.round(w * s); cv.height = Math.round(h * s);
     cx.drawImage(video, 0, 0, cv.width, cv.height);
     var full = cx.getImageData(0, 0, cv.width, cv.height);
@@ -290,20 +408,35 @@
     return { full: full, center: center };
   }
 
+  /* Elfogadjuk-e ezt a talalatot? */
+  function accept(text) {
+    var now = Date.now();
+    if (paused) return false;
+    if (now < cooldownUntil) return false;
+    if (SAME_IGNORE_MS > 0 && text === lastHitText &&
+        now - lastHitTime < SAME_IGNORE_MS) return false;
+    return true;
+  }
+
   function show(text, how) {
     paused = true;
+    lastHitText = text;
+    lastHitTime = Date.now();
     lastText = text;
     out.value = text;
     meta.textContent = how + '  ·  ' + text.length + ' karakter';
     panel.classList.add('show');
     frame.classList.add('hit');
     if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+    beepStart();
   }
 
   document.getElementById('ok').addEventListener('click', function () {
+    beepStop();
     panel.classList.remove('show');
     frame.classList.remove('hit');
     lastText = null;
+    cooldownUntil = Date.now() + COOLDOWN_MS;
     paused = false;
   });
 
@@ -325,15 +458,22 @@
         // B) natív, ha van (iPhone-on soha)
         if (native) {
           native.detect(video).then(function (list) {
-            if (list && list.length) { hits++; show(list[0].rawValue, 'natív BarcodeDetector'); }
+            if (list && list.length && accept(list[0].rawValue)) {
+              hits++; show(list[0].rawValue, 'natív BarcodeDetector'); }
           }).catch(function () {});
         }
         // B/C) ZXing es jsQR
         r = tryDecode(g.full, g.center);
-        if (r && !paused) { hits++; show(r.text, r.how); }
+        if (r && accept(r.text)) { hits++; show(r.text, r.how); }
       }
-      if (scans % 10 === 0) {
-        status.textContent = 'Keresés…  ' + scans + ' képkocka';
+      /* valodi sebesseg: hany teljes keresest vegzunk masodpercenkent */
+      fpsN++;
+      var nowT = performance.now();
+      if (!fpsT0) fpsT0 = nowT;
+      if (nowT - fpsT0 >= 1000) {
+        fps = Math.round(fpsN * 1000 / (nowT - fpsT0));
+        fpsT0 = nowT; fpsN = 0;
+        status.textContent = 'Keresés…  ' + fps + ' vizsgálat/mp';
       }
     }
     requestAnimationFrame(loop);
