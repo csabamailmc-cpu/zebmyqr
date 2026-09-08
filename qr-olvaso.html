@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR olvasó</title>
+<!--
+  ===================================================================
+  QR OLVASO -- egyetlen HTML fajl, iPhone Safari / Firefox
+  ===================================================================
+
+  MUKODES
+    A kamera kepet folyamatosan vizsgalja. Ha sikerul dekodolni, a kod
+    tartalma megjelenik egy szovegdobozban; az OK gomb megnyomasa utan
+    a doboz eltunik es a keresés folytatodik.
+
+  FONTOS -- HTTPS KELL, MINDEN BONGESZOBEN!
+    A getUserMedia (kamera) a webszabvany szerint csak "biztonsagos
+    kornyezetben" mukodik: https:// vagy http://localhost. Ez NEM
+    Safari-sajatossag -- a Chrome, a Firefox es az Edge is igy mukodik,
+    minden platformon. iPhone-on a Firefox es a Chrome ugyanugy HTTPS-t
+    kovetel, mint a Safari.
+    Egy "file://" utvonalon megnyitott HTML NEM kap kamerat.
+    Megoldasok:
+      - tedd fel barmilyen HTTPS-es tarhelyre (GitHub Pages, Netlify)
+      - vagy a gepeden:  python3 -m http.server 8000
+        majd egy HTTPS-alagut (pl. localhost.run, ngrok)
+      - vagy asztali gepen localhost-on nyisd meg (ott http is jo)
+
+  MELYIK DEKODOLOT HASZNALJA ES MIERT
+    A merések (117 kodos A4 lapok, tobbfele torzitas, 4 felismero)
+    ezt a sorrendet adtak:
+      1. WeChat CNN     85-90%   -- bongeszoben nem elerheto
+      2. ZXing (C++)    76-83%   -- ITT: zxing-wasm, UGYANAZ a motor
+      3. ZBar           75-78%   -- bongeszoben nem elerheto
+      4. OpenCV ArUco   67-71%   -- nem relevans telefonon
+    Ezert a fajl NEGY utat probal, ebben a sorrendben:
+      A) zxing-wasm -- a zxing-cpp WebAssemblyre forditva. PONTOSAN az
+         a motor, amivel a mereseimet vegeztem, es majdnem natív
+         sebesseggel fut. Ez a fo dekodolo.
+      B) natív BarcodeDetector -- FIGYELEM: a Safari, es igy MINDEN
+         iOS-es bongeszo (mert azok is WebKit-re epulnek) NEM tamogatja.
+         iPhone-on ez az ag sosem fut le. Androidos Chrome-ban igen.
+      C) ZXing-js -- tiszta JavaScript ZXing, tartalek.
+      D) jsQR     -- mas algoritmus, vegso tartalek.
+    Ha az egyik nem talal, a masik meg talalhat.
+
+  ELOFELDOLGOZAS
+    A meresek szerint a szuk quiet zone-os kodoknal sokat segit, ha a
+    kepet tobb meretben es kontraszttal is megprobaljuk. A fajl minden
+    kepkockan negy valtozatot probal: eredeti, kontrasztnovelt,
+    kicsinyitett, es kozepre vagott (nagyitott).
+
+  ONHORDO VALTOZAT
+    Ez a mappa mindent tartalmaz, ami a mukodeshez kell -- nincs
+    internetkapcsolat-igeny a konyvtarakhoz:
+      qr-olvaso.html            ez a fajl
+      robots.txt                a keresok kizarasa
+      lib/jsQR.js               jsQR dekodolo
+      lib/zxing-library.min.js  ZXing JavaScript valtozat
+      lib/zxing-wasm-reader.js  zxing-cpp WebAssembly betolto
+      lib/zxing_reader.wasm     a WebAssembly binaris (1,1 MB)
+    A teljes mappat kell feltolteni, a szerkezet megtartasaval.
+  ===================================================================
+-->
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #111; color: #eee; overflow: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #wrap { position: relative; width: 100vw; height: 100vh; }
+  video { width: 100%; height: 100%; object-fit: cover; background: #000; }
+  #frame {
+    position: absolute; inset: 0; margin: auto;
+    width: min(70vw, 70vh); height: min(70vw, 70vh);
+    border: 3px solid rgba(255,255,255,.75); border-radius: 12px;
+    box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); pointer-events: none;
+  }
+  #frame.hit { border-color: #35d07f; }
+  #bar {
+    position: absolute; left: 0; right: 0; top: 0; padding: 10px 14px;
+    background: rgba(0,0,0,.55); font-size: 14px; display: flex;
+    justify-content: space-between; gap: 10px;
+  }
+  #panel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: #1c1c1e; padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    border-top: 1px solid #333; display: none;
+  }
+  #panel.show { display: block; }
+  #out {
+    width: 100%; min-height: 92px; font: 15px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 10px; border-radius: 10px; border: 1px solid #444;
+    background: #000; color: #eee; resize: vertical;
+  }
+  .row { display: flex; gap: 10px; margin-top: 12px; }
+  button {
+    flex: 1; padding: 14px; font-size: 17px; font-weight: 600;
+    border: 0; border-radius: 10px; background: #0a84ff; color: #fff;
+  }
+  button.sec { background: #3a3a3c; }
+  #meta { font-size: 13px; color: #9a9a9e; margin-top: 8px; }
+  #err {
+    position: absolute; inset: 0; display: none; place-items: center;
+    padding: 24px; text-align: center; background: #111;
+  }
+  #err.show { display: grid; }
+  a { color: #0a84ff; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline muted autoplay></video>
+  <div id="frame"></div>
+  <div id="bar">
+    <span id="status">Indulás…</span>
+    <span id="engine"></span>
+  </div>
+
+  <div id="panel">
+    <textarea id="out" readonly></textarea>
+    <div id="meta"></div>
+    <div class="row">
+      <button id="copy" class="sec">Másolás</button>
+      <button id="ok">OK</button>
+    </div>
+  </div>
+
+  <div id="err">
+    <div>
+      <h2>Nincs kamerakép</h2>
+      <p id="errmsg"></p>
+      <p style="font-size:14px;color:#9a9a9e">
+        Az iPhone csak <b>https://</b> címen ad kamera-hozzáférést.
+        Ha a fájlt <code>file://</code> útvonalról nyitottad meg,
+        tedd fel egy HTTPS-es tárhelyre.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script src="lib/jsQR.js"></script>
+<script src="lib/zxing-library.min.js"></script>
+<script src="lib/zxing-wasm-reader.js"></script>
+<script>
+  /* zxing-wasm (zxing-cpp WebAssembly) -- HELYI fajlbol.
+     Az IIFE valtozat a ZXingWASM globalis objektumot adja, tehat nem
+     kell ES-modul. A .wasm binarist kifejezetten a lib/ mappabol
+     toltjuk be, kulonben a csomag a jsdelivr CDN-t keresne. */
+  (function () {
+    if (!window.ZXingWASM) { window.__zxingWasm = null; return; }
+    try {
+      window.ZXingWASM.prepareZXingModule({
+        overrides: {
+          locateFile: function (path, prefix) {
+            return path.endsWith('.wasm') ? 'lib/' + path : prefix + path;
+          }
+        },
+        fireImmediately: true
+      });
+      window.__zxingWasm = window.ZXingWASM;
+    } catch (e) { window.__zxingWasm = null; }
+  })();
+</script>
+<script>
+(function () {
+  "use strict";
+
+  var video   = document.getElementById('v');
+  var panel   = document.getElementById('panel');
+  var out     = document.getElementById('out');
+  var meta    = document.getElementById('meta');
+  var status  = document.getElementById('status');
+  var engineEl= document.getElementById('engine');
+  var frame   = document.getElementById('frame');
+  var errBox  = document.getElementById('err');
+  var errMsg  = document.getElementById('errmsg');
+
+  var paused  = false;       // amig a talalat lathato, nem keresunk
+  var lastText = null;
+  var scans = 0, hits = 0;
+
+  // --- vaszon a kepkockak feldolgozasahoz ---
+  var cv = document.createElement('canvas');
+  var cx = cv.getContext('2d', { willReadFrequently: true });
+
+  // --- A) natív BarcodeDetector ---
+  var native = null;
+  if ('BarcodeDetector' in window) {
+    try { native = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { native = null; }
+  }
+
+  // --- B) ZXing ---
+  var zxing = null;
+  try {
+    if (window.ZXing && window.ZXing.MultiFormatReader) {
+      var hints = new Map();
+      hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [window.ZXing.BarcodeFormat.QR_CODE]);
+      // TRY_HARDER: lassabb, de a szuk quiet zone-os kodoknal sokat segit
+      hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+      zxing = new window.ZXing.MultiFormatReader();
+      zxing.setHints(hints);
+    }
+  } catch (e) { zxing = null; }
+
+  function zxingDecode(imgData) {
+    if (!zxing) return null;
+    try {
+      var lum = new window.ZXing.RGBLuminanceSource(
+        new Uint8ClampedArray(imgData.data.buffer.slice(0)),
+        imgData.width, imgData.height);
+      var bmp = new window.ZXing.BinaryBitmap(new window.ZXing.HybridBinarizer(lum));
+      var r = zxing.decode(bmp);
+      return r ? r.getText() : null;
+    } catch (e) { return null; }
+    finally { try { zxing.reset(); } catch (e) {} }
+  }
+
+  // --- A) zxing-wasm (a mereseim legjobb bongeszos dekodoloja) ---
+  var wasmBusy = false;
+  function wasmDecode(imgData) {
+    var m = window.__zxingWasm;
+    if (!m || wasmBusy || paused) return;
+    wasmBusy = true;
+    m.readBarcodes(imgData, { formats: ['QRCode'], tryHarder: true, maxNumberOfSymbols: 1 })
+      .then(function (res) {
+        if (res && res.length && !paused) { hits++; show(res[0].text, 'zxing-wasm'); }
+      })
+      .catch(function () {})
+      .then(function () { wasmBusy = false; });
+  }
+
+  // --- C) jsQR ---
+  function jsqrDecode(imgData) {
+    if (!window.jsQR) return null;
+    var r = window.jsQR(imgData.data, imgData.width, imgData.height,
+                        { inversionAttempts: 'attemptBoth' });
+    return r ? r.data : null;
+  }
+
+  // --- elofeldolgozas: kontraszt novelese ---
+  function boost(src) {
+    var d = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
+    var p = d.data, i, y;
+    for (i = 0; i < p.length; i += 4) {
+      y = (p[i] * 0.299 + p[i+1] * 0.587 + p[i+2] * 0.114);
+      y = y < 110 ? 0 : (y > 145 ? 255 : (y - 110) * (255 / 35));
+      p[i] = p[i+1] = p[i+2] = y;
+    }
+    return d;
+  }
+
+  // Egy kepkocka: tobb valtozatot probal, tobb dekodoloval.
+  // Sorrend: a gyorsabb/jobb elol, hogy a tobbi ne is kelljen.
+  function tryDecode(full, center) {
+    var variants = [
+      ['teljes',            full],
+      ['közép',             center],
+      ['teljes+kontraszt',  boost(full)],
+      ['közép+kontraszt',   boost(center)]
+    ];
+    for (var i = 0; i < variants.length; i++) {
+      var name = variants[i][0], img = variants[i][1];
+      if (!img) continue;
+      var t;
+      t = zxingDecode(img);  if (t) return { text: t, how: 'ZXing-js / ' + name };
+      t = jsqrDecode(img);   if (t) return { text: t, how: 'jsQR / ' + name };
+    }
+    return null;
+  }
+
+  function grab() {
+    var w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return null;
+    // teljes kep, legfeljebb 640 px szeles (gyorsabb, es eleg)
+    var s = Math.min(1, 640 / w);
+    cv.width = Math.round(w * s); cv.height = Math.round(h * s);
+    cx.drawImage(video, 0, 0, cv.width, cv.height);
+    var full = cx.getImageData(0, 0, cv.width, cv.height);
+    // kozepso negyzet kinagyitva: a kereten belul levo kodhoz
+    var side = Math.round(Math.min(w, h) * 0.70);
+    var sx = Math.round((w - side) / 2), sy = Math.round((h - side) / 2);
+    cv.width = 480; cv.height = 480;
+    cx.drawImage(video, sx, sy, side, side, 0, 0, 480, 480);
+    var center = cx.getImageData(0, 0, 480, 480);
+    return { full: full, center: center };
+  }
+
+  function show(text, how) {
+    paused = true;
+    lastText = text;
+    out.value = text;
+    meta.textContent = how + '  ·  ' + text.length + ' karakter';
+    panel.classList.add('show');
+    frame.classList.add('hit');
+    if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+  }
+
+  document.getElementById('ok').addEventListener('click', function () {
+    panel.classList.remove('show');
+    frame.classList.remove('hit');
+    lastText = null;
+    paused = false;
+  });
+
+  document.getElementById('copy').addEventListener('click', function () {
+    if (!lastText) return;
+    if (navigator.clipboard) navigator.clipboard.writeText(lastText);
+    else { out.removeAttribute('readonly'); out.select();
+           document.execCommand('copy'); out.setAttribute('readonly',''); }
+  });
+
+  function loop() {
+    if (!paused) {
+      var g = grab();
+      if (g) {
+        scans++;
+        var r = null;
+        // A) zxing-wasm -- aszinkron, sajat utemben fut
+        wasmDecode(g.center);
+        // B) natív, ha van (iPhone-on soha)
+        if (native) {
+          native.detect(video).then(function (list) {
+            if (list && list.length) { hits++; show(list[0].rawValue, 'natív BarcodeDetector'); }
+          }).catch(function () {});
+        }
+        // B/C) ZXing es jsQR
+        r = tryDecode(g.full, g.center);
+        if (r && !paused) { hits++; show(r.text, r.how); }
+      }
+      if (scans % 10 === 0) {
+        status.textContent = 'Keresés…  ' + scans + ' képkocka';
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  function fail(msg) {
+    errMsg.textContent = msg;
+    errBox.classList.add('show');
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    fail('A böngésző nem támogatja a kamerát, vagy a lap nem HTTPS címen fut.');
+  } else {
+    navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },   // hatso kamera
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 }
+      }
+    }).then(function (stream) {
+      video.srcObject = stream;
+      return video.play();
+    }).then(function () {
+      var eng = [];
+      if (window.__zxingWasm) eng.push('zxing-wasm');
+      if (native) eng.push('natív');
+      if (zxing)  eng.push('ZXing');
+      if (window.jsQR) eng.push('jsQR');
+      engineEl.textContent = eng.join(' + ');
+      status.textContent = 'Keresés…';
+      requestAnimationFrame(loop);
+    }).catch(function (e) {
+      fail(e && e.message ? e.message : String(e));
+    });
+  }
+})();
+</script>
+</body>
+</html>

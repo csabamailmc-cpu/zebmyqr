@@ -1,0 +1,7 @@
+# A keresomotorok NE indexeljek ezt a lapot.
+# Ez nem biztonsagi vedelem -- aki ismeri a cimet, eleri --, csak azt
+# akadalyozza meg, hogy a Google, a Bing es tarsaik felvegyek a talalatok
+# koze. Egyedi, kitalalhatatlan konyvtarnev + ez a fajl egyutt eleg ahhoz,
+# hogy a lap gyakorlatilag csak neked legyen elerheto.
+User-agent: *
+Disallow: /

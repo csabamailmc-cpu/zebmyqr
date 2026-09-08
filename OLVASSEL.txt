@@ -1,0 +1,44 @@
+QR OLVASO -- ONHORDO WEBLAP
+===========================
+
+MI EZ
+  Egyetlen weblap, ami a telefon kameraval folyamatosan QR kodot keres.
+  Ha talal, megjeleniti a tartalmat egy szovegdobozban; az OK gomb utan
+  a kereses folytatodik.
+
+  Minden konyvtar HELYBEN van (lib/ mappa), tehat a lap internet nelkul
+  is mukodik, es nem fugg semmilyen kulso szolgaltatastol.
+
+A MAPPA TARTALMA
+  qr-olvaso.html            a weblap
+  robots.txt                a keresomotorok kizarasa
+  lib/jsQR.js               jsQR dekodolo (257 kB)
+  lib/zxing-library.min.js  ZXing JavaScript valtozat (336 kB)
+  lib/zxing-wasm-reader.js  zxing-cpp WebAssembly betolto (38 kB)
+  lib/zxing_reader.wasm     a WebAssembly binaris (1,1 MB)
+
+  A teljes mappat kell feltolteni, a szerkezet megtartasaval!
+  Ha a lib/ mappa hianyzik, a lap betoltodik, de nem fog dekodolni.
+
+HTTPS KELL -- MINDEN BONGESZOBEN
+  A kamerahozzaferes (getUserMedia) a webszabvany szerint csak
+  "biztonsagos kornyezetben" mukodik: https:// vagy http://localhost.
+  Ez NEM Safari-sajatossag: a Chrome, a Firefox es az Edge is igy
+  mukodik, minden platformon. iPhone-on a Firefox es a Chrome ugyanugy
+  HTTPS-t kovetel, mint a Safari.
+
+  Egy "file://" utvonalon megnyitott HTML NEM kap kamerat.
+
+HOVA TEGYEM
+  a) GitHub Pages   -- ingyenes, automatikus HTTPS  (lasd a leirast)
+  b) Netlify Drop   -- a mappat behuzod, azonnal kapsz HTTPS cimet
+  c) sajat gep      -- Caddy vagy nginx + Tailscale / Let's Encrypt
+
+MELYIK DEKODOLOT HASZNALJA
+  Meressel (117 kodos A4 lapok, tobbfele torzitas) ez a sorrend jott ki:
+    1. zxing-wasm (zxing-cpp)  76-83%  -- a fo dekodolo
+    2. natív BarcodeDetector           -- iPhone-on NEM letezik
+    3. ZXing-js                        -- tartalek
+    4. jsQR                            -- vegso tartalek
+  A lap mind a negyet vegigprobalja, tobb kepvaltozattal (eredeti,
+  kontrasztnovelt, kozepre vagott).
