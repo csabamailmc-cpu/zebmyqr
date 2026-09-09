@@ -181,9 +181,11 @@
        Csak ritkan, ertelmes esemenyeknel irunk bele. -->
   <p id="announce" role="status" aria-live="polite" class="sr-only"></p>
 
-  <!-- role="dialog": a talalat egy parbeszedpanel. aria-modal="false",
-       mert a kamerakep alatta tovabbra is lathato marad. -->
-  <div id="panel" role="dialog" aria-modal="false"
+  <!-- MODALIS panel. Amig nyitva van, a lap TOBBI resze aria-hidden
+       lesz (lasd a setOutsideHidden fuggvenyt), igy a kepernyoolvaso
+       CSAK a kod szoveget es a gombokat talalja meg. A sebesseg, a
+       statusz es a kamerakep ilyenkor nem letezik szamara. -->
+  <div id="panel" role="dialog" aria-modal="true"
        aria-labelledby="panel-cim">
     <h2 id="panel-cim" class="sr-only">A beolvasott kód tartalma</h2>
     <!-- MIERT textarea es nem <output> vagy <p>?
@@ -203,20 +205,22 @@
          15 karakter". Ez zavaro volt es semmit nem mondott a kodrol.
          Most aria-hidden: csak a szemnek szol. -->
     <p id="meta" aria-hidden="true"></p>
+    <!-- A SORREND SZANDEKOS: a kod szovege utan AZONNAL a
+         "Felismerés folytatása" kovetkezik, mert az a leggyakoribb
+         muvelet. A masik ket gomb utana all: elerhetok maradnak, de
+         nem szolnak bele az elso ket bemondasba.
+         WCAG 1.4.2: a 3,5 mp-es hangot mindharom gomb leallitja. -->
     <div class="row">
-      <button id="copy" class="sec" type="button">
-        Másolás<span class="sr-only"> a vágólapra</span>
-      </button>
-      <!-- WCAG 1.4.2 (Audio Control): a 3,5 masodperces hang tobb mint
-           3 masodpercig szol, ezert KELL egy elerheto leallito vezerlo.
-           Ez az OK gomb, es a felirata ki is mondja. -->
       <button id="go" type="button">
         Felismerés folytatása<span class="sr-only">, a hang leállítása</span>
       </button>
     </div>
     <div class="row">
+      <button id="copy" class="sec" type="button">
+        Másolás<span class="sr-only"> a vágólapra</span>
+      </button>
       <button id="stop" class="sec" type="button">
-        Felismerés megszakítása, bezárás<span class="sr-only">, a kamera kikapcsolása</span>
+        Megszakítás<span class="sr-only">, a felismerés leállítása és a kamera kikapcsolása</span>
       </button>
     </div>
   </div>
@@ -332,6 +336,8 @@
     } catch (e) { beepOsc = null; beepGain = null; }
   }
 
+  syncHiddenPanels();   // indulaskor a rejtett panelek ne latszodjanak
+
   /* az elso erintes/kattintas feloldja a hangot (iOS kovetelmeny) */
   ['touchstart', 'click'].forEach(function (ev) {
     document.addEventListener(ev, audioUnlock, { once: false, passive: true });
@@ -419,6 +425,57 @@
     return { full: full, center: center };
   }
 
+  /* ===================================================================
+     MODALIS IZOLACIO
+     -------------------------------------------------------------------
+     Amig a talalati panel nyitva van, a lap TOBBI reszet elrejtjuk a
+     kepernyoolvaso elol. Igy a felhasznalo CSAK ezt hallja:
+        1. "Kód beolvasva, N karakter: <a kod szovege>"
+        2. "A beolvasott kód szövege, <a kod>, csak olvasható szövegmező"
+        3. "Felismerés folytatása, a hang leállítása, gomb"
+     A sebessegvalto, a statuszsav es a kamerakep ilyenkor NEM letezik
+     a kepernyoolvaso szamara.
+     (A Masolas es a Megszakitas gomb elerheto marad, de a panelen
+     belul hatrebb -- kulonben hasznalhatatlanok lennenek.)
+     =================================================================== */
+  function setOutsideHidden(hidden) {
+    /* A panel oseit NEM rejtjuk el, csak a TESTVEREIKET minden szinten.
+       Igy a panel elerheto marad, minden mas eltunik. */
+    var node = panel, parent, kids, i, el;
+    while (node && node !== document.body) {
+      parent = node.parentNode;
+      if (!parent) break;
+      kids = parent.children;
+      for (i = 0; i < kids.length; i++) {
+        el = kids[i];
+        if (el === node) continue;
+        if (el.id === 'announce') continue;      // a bemondas kell
+        if (hidden) {
+          el.setAttribute('data-was-hidden', el.getAttribute('aria-hidden') || '');
+          el.setAttribute('aria-hidden', 'true');
+        } else {
+          var prev = el.getAttribute('data-was-hidden');
+          if (prev) el.setAttribute('aria-hidden', prev);
+          else el.removeAttribute('aria-hidden');
+          el.removeAttribute('data-was-hidden');
+        }
+      }
+      node = parent;
+    }
+  }
+
+  /* A nem lathato paneleket is elrejtjuk a felolvaso elol -- kulonben
+     a kepernyoolvaso megtalalna a "Felismerés indítása" es a "Nincs
+     kamerakép" reszeket akkor is, amikor azok nem latszanak. */
+  function syncHiddenPanels() {
+    ['panel', 'stopped', 'err'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (el.classList.contains('show')) el.removeAttribute('aria-hidden');
+      else el.setAttribute('aria-hidden', 'true');
+    });
+  }
+
   /* Elfogadjuk-e ezt a talalatot? */
   function accept(text) {
     var now = Date.now();
@@ -446,6 +503,8 @@
     meta.textContent = text.length + ' karakter  ·  ' + how;
     panel.classList.add('show');
     frame.classList.add('hit');
+    syncHiddenPanels();
+    setOutsideHidden(true);          // csak a panel letezzen a felolvasonak
     if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
     beepStart();
     if (!actx) {
@@ -459,8 +518,10 @@
 
   goBtn.addEventListener('click', function () {
     beepStop();
+    setOutsideHidden(false);
     panel.classList.remove('show');
     frame.classList.remove('hit');
+    syncHiddenPanels();
     /* Roviden, mert ez gyakran ismetlodik */
     announce.textContent = 'Keresés folytatódik.';
     lastText = null;
@@ -473,15 +534,18 @@
      ezert nem eleg csak a keresest szuneteltetni. */
   function stopAll() {
     beepStop();
+    setOutsideHidden(false);
     paused = true; running = false;
     panel.classList.remove('show');
     frame.classList.remove('hit');
+    syncHiddenPanels();
     if (camStream) {
       try { camStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
       camStream = null;
     }
     try { video.srcObject = null; } catch (e) {}
     stoppedBox.classList.add('show');
+    syncHiddenPanels();
     status.textContent = 'Leállítva';
     announce.textContent = 'A felismerés leállítva, a kamera kikapcsolva.';
     try { restartBtn.focus(); } catch (e) {}
@@ -502,6 +566,7 @@
 
   restartBtn.addEventListener('click', function () {
     stoppedBox.classList.remove('show');
+    syncHiddenPanels();
     announce.textContent = 'A felismerés újraindul.';
     startCamera();
   });
@@ -550,6 +615,7 @@
   function fail(msg) {
     errMsg.textContent = msg;
     errBox.classList.add('show');
+    syncHiddenPanels();
     announce.textContent = 'Hiba: nincs kamerakép. ' + msg;
   }
 
