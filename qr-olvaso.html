@@ -32,6 +32,13 @@
         majd egy HTTPS-alagut (pl. localhost.run, ngrok)
       - vagy asztali gepen localhost-on nyisd meg (ott http is jo)
 
+  MIERT WEB WORKER?
+    A dekodolas szinkron es lassu (58-1000 ms kepkockankent). Ha a fo
+    szalon fut, a lap valaszkeptelenne valik: iOS-en a VoiceOver
+    beszede elnemul, es a gombok sem nyomhatok meg. Ezert a dekodolas
+    KULON SZALON (Web Worker) tortenik -- a fo szal csak atadja a
+    kepkockat, es vegig valaszkepes marad.
+
   MELYIK DEKODOLOT HASZNALJA ES MIERT
     A merések (117 kodos A4 lapok, tobbfele torzitas, 4 felismero)
     ezt a sorrendet adtak:
@@ -155,8 +162,7 @@
   <!-- Kimelo mod: ritkabb vizsgalat, hogy a kepernyoolvaso zavartalanul
        beszelhessen. A gomb a lap tetejen van, hogy Tab-bal elsokent
        elerheto legyen. -->
-  <button id="gentle" type="button" class="topbtn" aria-pressed="false">
-    Kímélő mód<span class="sr-only"> képernyőolvasóhoz: ritkább vizsgálat, zavartalan felolvasás</span>
+  <button id="speed" type="button" class="topbtn">Sebesség: Gyors<span class="sr-only">. Koppints a váltáshoz: gyors, közepes vagy lassú. A lassú beállítás képernyőolvasóhoz való.</span>
   </button>
 
   <div id="bar">
@@ -231,83 +237,41 @@
   </div>
 </div>
 
-<script src="lib/jsQR.js"></script>
-<script src="lib/zxing-library.min.js"></script>
-<script src="lib/zxing-wasm-reader.js"></script>
-<script>
-  /* zxing-wasm (zxing-cpp WebAssembly) -- HELYI fajlbol.
-     Az IIFE valtozat a ZXingWASM globalis objektumot adja, tehat nem
-     kell ES-modul. A .wasm binarist kifejezetten a lib/ mappabol
-     toltjuk be, kulonben a csomag a jsdelivr CDN-t keresne. */
-  (function () {
-    if (!window.ZXingWASM) { window.__zxingWasm = null; return; }
-    try {
-      window.ZXingWASM.prepareZXingModule({
-        overrides: {
-          locateFile: function (path, prefix) {
-            return path.endsWith('.wasm') ? 'lib/' + path : prefix + path;
-          }
-        },
-        fireImmediately: true
-      });
-      window.__zxingWasm = window.ZXingWASM;
-    } catch (e) { window.__zxingWasm = null; }
-  })();
-</script>
+
 <script>
 (function () {
   "use strict";
 
   /* ===================================================================
-     HANGJELZES A SIKERES FELISMERESKOR
+     VIZSGALATI KOZ -- a felhasznalo allithatja a lap tetejen
      -------------------------------------------------------------------
-     BEEP_HZ    a hang frekvenciaja Hz-ben (440 = normal A hang)
-     BEEP_SEC   a hang hossza masodpercben
-     BEEP_VOL   hangero 0.0 es 1.0 kozott
-
-     A hang mindenkeppen elhallgat, amint megnyomod az OK gombot.
-
-     FONTOS -- iOS KORLATOZAS:
-     A Safari (es minden iOS-es bongeszo) CSAK felhasznaloi erintes utan
-     enged hangot lejatszani. Ezert a lap az elso erintesre "feloldja" a
-     hangkimenetet. Ha a legelso beolvasas nema, koppints egyet a
-     kepernyore, es onnantol szolni fog.
+     A dekodolas kulon szalon fut, de a kepkocka kimasolasa (getImageData)
+     meg mindig a fo szalon tortenik, es az sem ingyenes. Ritkabb
+     vizsgalattal a keszulek meg valaszkepesebb lesz.
+     A "Lassu" beallitas kepernyoolvasohoz keszult: 10 masodpercenkent
+     egy vizsgalat. Ez boven eleg, ha a kodot odatartod, es kozben a
+     VoiceOver zavartalanul beszel.
      =================================================================== */
-  var BEEP_HZ  = 440;
-  var BEEP_SEC = 3.5;
-  var BEEP_VOL = 0.25;
+  var SPEEDS = [
+    { name: 'Gyors',  ms: 150,   say: 'gyors, másodpercenként több vizsgálat' },
+    { name: 'Közepes',ms: 1000,  say: 'közepes, másodpercenként egy vizsgálat' },
+    { name: 'Lassú',  ms: 10000, say: 'lassú, tíz másodpercenként egy vizsgálat, képernyőolvasóhoz' }
+  ];
+  var speedIdx = 0;
+  var SCAN_MS = SPEEDS[0].ms;
+  var scanTimer = null;
 
   /* ===================================================================
      UJRA-FELISMERES ELLENI VEDELEM
      -------------------------------------------------------------------
-     Ha az OK utan ugyanaz a kod meg a kamera elott van, a program
-     azonnal ujra felismerne -- vegtelen korbe kerulne. Ezert:
-       COOLDOWN_MS    az OK utan ennyi ideig egyaltalan nem keresunk
-       SAME_IGNORE_MS eddig figyelmen kivul hagyjuk UGYANAZT a szoveget
-                      (mas kod persze azonnal felismerheto)
+     COOLDOWN_MS    a "Felismerés folytatása" utan ennyi ideig nem keresunk
+     SAME_IGNORE_MS eddig figyelmen kivul hagyjuk UGYANAZT a szoveget
+                    (mas kod persze azonnal felismerheto)
      Allitsd SAME_IGNORE_MS = 0 -ra, ha ugyanazt a kodot tobbszor
      egymas utan is be akarod olvasni.
      =================================================================== */
   var COOLDOWN_MS    = 700;
   var SAME_IGNORE_MS = 4000;
-
-  /* ===================================================================
-     SZUNET KET VIZSGALAT KOZOTT -- EZ A LEGFONTOSABB BEALLITAS
-     -------------------------------------------------------------------
-     A dekodolas SZINKRON es lassu (merve: 58 ms tiszta kepen, akar
-     1000 ms mintas hatteren). Ha megallas nelkul, requestAnimationFrame-
-     mel futtatjuk, a fo szal 100%-ban foglalt marad, es a kepernyoolvaso
-     (VoiceOver, TalkBack) beszede ELNEMUL, mert nem jut idohoz.
-     Ezert ket vizsgalat kozott KOTELEZO szunetet tartani.
-
-     SCAN_GAP_MS      alap szunet ket vizsgalat kozott
-     SCAN_GAP_A11Y_MS szunet, ha kepernyoolvaso hasznalatat gyanitjuk
-                      vagy a felhasznalo bekapcsolja a "kimelo mod"-ot
-     A kimelo mod lassabb felismerest ad, cserebe a keszulek reagal.
-     =================================================================== */
-  var SCAN_GAP_MS      = 120;
-  var SCAN_GAP_A11Y_MS = 400;
-  var gentle = false;              // kimelo mod
 
   var cooldownUntil = 0;
   var lastHitText   = null;
@@ -402,119 +366,33 @@
   if (!cx) { try { cx = cv.getContext('2d'); } catch (e) { cx = null; } }
 
   // --- A) natív BarcodeDetector ---
-  var native = null;
-  if ('BarcodeDetector' in window) {
-    try { native = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { native = null; }
-  }
 
-  // --- B) ZXing ---
-  var zxing = null;
-  try {
-    if (window.ZXing && window.ZXing.MultiFormatReader) {
-      var hints = new Map();
-      hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [window.ZXing.BarcodeFormat.QR_CODE]);
-      // TRY_HARDER: lassabb, de a szuk quiet zone-os kodoknal sokat segit
-      hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
-      zxing = new window.ZXing.MultiFormatReader();
-      zxing.setHints(hints);
-    }
-  } catch (e) { zxing = null; }
-
-  function zxingDecode(imgData) {
-    if (!zxing) return null;
-    try {
-      var lum = new window.ZXing.RGBLuminanceSource(
-        new Uint8ClampedArray(imgData.data.buffer.slice(0)),
-        imgData.width, imgData.height);
-      var bmp = new window.ZXing.BinaryBitmap(new window.ZXing.HybridBinarizer(lum));
-      var r = zxing.decode(bmp);
-      return r ? r.getText() : null;
-    } catch (e) { return null; }
-    finally { try { zxing.reset(); } catch (e) {} }
-  }
-
-  // --- A) zxing-wasm (a mereseim legjobb bongeszos dekodoloja) ---
-  var wasmBusy = false;
-  function wasmDecode(imgData) {
-    var m = window.__zxingWasm;
-    if (!m || wasmBusy || paused) return;
-    wasmBusy = true;
-    m.readBarcodes(imgData, { formats: ['QRCode'], tryHarder: true, maxNumberOfSymbols: 1 })
-      .then(function (res) {
-        if (res && res.length && accept(res[0].text)) { hits++; show(res[0].text, 'zxing-wasm'); }
-      })
-      .catch(function () {})
-      .then(function () { wasmBusy = false; });
-  }
-
-  // --- C) jsQR ---
-  function jsqrDecode(imgData) {
-    if (!window.jsQR) return null;
-    /* 'dontInvert': a mi kodjaink mindig sotet-vilagos allasuak.
-       Az 'attemptBoth' zajos kepen MEGDUPLAZZA a koltseget
-       (merve: 952 ms helyett 2032 ms egy 480x480-as zajos kepen). */
-    var r = window.jsQR(imgData.data, imgData.width, imgData.height,
-                        { inversionAttempts: 'dontInvert' });
-    return r ? r.data : null;
-  }
-
-  // --- elofeldolgozas: kontraszt novelese ---
-  function boost(src) {
-    /* Az "new ImageData(...)" konstruktor csak Safari 12.1+ ota letezik.
-       A cx.createImageData() viszont a Canvas 2D legelso verzioja ota
-       megvan, minden bongeszoben. Ezert azt hasznaljuk, es csak akkor
-       esunk vissza a konstruktorra, ha nincs vaszon. */
-    var d;
-    if (cx && cx.createImageData) {
-      d = cx.createImageData(src.width, src.height);
-      d.data.set(src.data);
-    } else if (typeof ImageData === 'function') {
-      d = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
-    } else {
-      return src;                 // nincs mod masolatot keszitani
-    }
-    var p = d.data, i, y;
-    for (i = 0; i < p.length; i += 4) {
-      y = (p[i] * 0.299 + p[i+1] * 0.587 + p[i+2] * 0.114);
-      y = y < 110 ? 0 : (y > 145 ? 255 : (y - 110) * (255 / 35));
-      p[i] = p[i+1] = p[i+2] = y;
-    }
-    return d;
-  }
+  /* A ZXing-js es a natív BarcodeDetector fo szalas dekodoloi eltavolitva:
+     mindket ut a fo szalon dolgozott volna. A dekodolas most kizarolag
+     a workerben tortenik (lib/decoder-worker.js). */
 
   /* ===================================================================
-     TELJESITMENY -- MIERT EGY VALTOZAT KEPKOCKANKENT?
+     A DEKODOLAS KULON SZALON FUT (Web Worker)
      -------------------------------------------------------------------
-     Meres (Node, 480x480-as kep, jsQR):
-        sima/ures kep     58 ms
-        QR-szeru minta    78 ms
-        zajos kep       2032 ms   <-- ez a veszelyes eset
-     Ha kepkockankent mind a 4 kepvaltozatot vegigprobalnank ket
-     szinkron dekodoloval, az 8 hivas = akar 0,5 mp is lehetne egy
-     kepkockara. Ezert kepkockankent CSAK EGY valtozatot probalunk,
-     korbeforgatva. Igy negy kepkocka alatt mindegyik sorra kerul,
-     de egyik sem blokkolja a felhasznaloi feluletet.
-     A zxing-wasm ettol fuggetlenul, aszinkron modon fut minden
-     kepkockan -- az a fo dekodolo, ezek csak tartalekok.
+     Ez a legfontosabb valtozas. Korabban a dekodolas a fo szalon
+     futott, ezert a lap valaszkeptelenne valt: iOS-en a VoiceOver
+     elnemult, es a gombok sem voltak megnyomhatok.
+     Most a fo szal csak atadja a kepkockat a workernek, es azonnal
+     visszater -- igy vegig reagal a koppintasokra.
      =================================================================== */
-  var variantIdx = 0;
-  function tryDecode(full, center) {
-    var list = [
-      ['közép',            center],
-      ['teljes',           full],
-      ['közép+kontraszt',  null],   // lustan keszul, lasd lentebb
-      ['teljes+kontraszt', null]
-    ];
-    var k = variantIdx % list.length;
-    variantIdx++;
-    var name = list[k][0], img = list[k][1];
-    if (img === null) img = boost(k === 2 ? center : full);
-    if (!img) return null;
-    var t;
-    t = zxingDecode(img);  if (t) return { text: t, how: 'ZXing-js / ' + name };
-    t = jsqrDecode(img);   if (t) return { text: t, how: 'jsQR / ' + name };
-    return null;
-  }
+  var worker = null, workerBusy = false, scanId = 0;
+  try {
+    worker = new Worker('lib/decoder-worker.js');
+    worker.onmessage = function (ev) {
+      var m = ev.data || {};
+      if (m.type === 'result') {
+        workerBusy = false;
+        if (m.text && accept(m.text)) { hits++; show(m.text, 'jsQR (külön szálon)'); }
+        scans++;
+      }
+    };
+    worker.onerror = function () { worker = null; };
+  } catch (e) { worker = null; }
 
   function grab() {
     if (!cx) return null;                 // nincs hasznalhato vaszon
@@ -603,13 +481,14 @@
 
   /* Kimelo mod: ritkabb vizsgalat. Ha a felhasznalo kepernyoolvasoval
      dolgozik, ez adja vissza a keszulek valaszkeszseget. */
-  var gentleBtn = document.getElementById('gentle');
-  gentleBtn.addEventListener('click', function () {
-    gentle = !gentle;
-    gentleBtn.setAttribute('aria-pressed', gentle ? 'true' : 'false');
-    announce.textContent = gentle
-      ? 'Kímélő mód bekapcsolva. A felismerés lassabb, de a felolvasás zavartalan.'
-      : 'Kímélő mód kikapcsolva. A felismerés gyorsabb.';
+  var speedBtn = document.getElementById('speed');
+  speedBtn.addEventListener('click', function () {
+    speedIdx = (speedIdx + 1) % SPEEDS.length;
+    SCAN_MS = SPEEDS[speedIdx].ms;
+    speedBtn.firstChild.nodeValue = 'Sebesség: ' + SPEEDS[speedIdx].name;
+    announce.textContent = 'Sebesség: ' + SPEEDS[speedIdx].say + '.';
+    /* azonnal ujraidozitunk, hogy ne kelljen megvarni a regi kozt */
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = setTimeout(loop, 50); }
   });
 
   restartBtn.addEventListener('click', function () {
@@ -634,37 +513,29 @@
   });
 
   function loop() {
-    if (!paused) {
+    if (!paused && worker && !workerBusy) {
       var g = grab();
       if (g) {
-        scans++;
-        var r = null;
-        // A) zxing-wasm -- aszinkron, sajat utemben fut
-        wasmDecode(g.center);
-        // B) natív, ha van (iPhone-on soha)
-        if (native) {
-          native.detect(video).then(function (list) {
-            if (list && list.length && accept(list[0].rawValue)) {
-              hits++; show(list[0].rawValue, 'natív BarcodeDetector'); }
-          }).catch(function () {});
-        }
-        // B/C) ZXing es jsQR
-        r = tryDecode(g.full, g.center);
-        if (r && accept(r.text)) { hits++; show(r.text, r.how); }
+        workerBusy = true;
+        scanId++;
+        /* A pixeltombot ATADJUK (transfer), nem masoljuk: igy a fo szal
+           meg a masolassal sem tolt idot. */
+        var buf = g.center.data.buffer.slice(0);
+        try {
+          worker.postMessage({ cmd: 'scan', id: scanId, data: buf,
+                               w: g.center.width, h: g.center.height }, [buf]);
+        } catch (e) { workerBusy = false; }
       }
-      /* valodi sebesseg: hany teljes keresest vegzunk masodpercenkent */
       fpsN++;
-      var nowT = performance.now();
+      var nowT = Date.now();
       if (!fpsT0) fpsT0 = nowT;
-      if (nowT - fpsT0 >= 1000) {
+      if (nowT - fpsT0 >= 2000) {
         fps = Math.round(fpsN * 1000 / (nowT - fpsT0));
         fpsT0 = nowT; fpsN = 0;
-        status.textContent = 'Keresés…  ' + fps + ' vizsgálat/mp';
+        status.textContent = 'Keresés…  ' + fps + '/mp';
       }
     }
-    /* setTimeout es NEM requestAnimationFrame: igy a bongeszo (es vele a
-       kepernyoolvaso) tenylegesen szohoz jut ket vizsgalat kozott. */
-    if (running) setTimeout(loop, gentle ? SCAN_GAP_A11Y_MS : SCAN_GAP_MS);
+    if (running) scanTimer = setTimeout(loop, SCAN_MS);
   }
 
   function fail(msg) {
@@ -687,10 +558,7 @@
       return video.play();
     }).then(function () {
       var eng = [];
-      if (window.__zxingWasm) eng.push('zxing-wasm');
-      if (native) eng.push('natív');
-      if (zxing)  eng.push('ZXing-js');
-      if (window.jsQR) eng.push('jsQR');
+      if (worker) eng.push('jsQR külön szálon');
       engineEl.textContent = eng.join(' + ');
       /* A hangkimenet feloldasa: egyes bongeszokben a kamera-engedely
          megadasa is felhasznaloi gesztusnak szamit, ezert itt is
@@ -702,7 +570,7 @@
       paused = false;
       cooldownUntil = Date.now() + COOLDOWN_MS;
       /* a ciklust csak egyszer inditjuk el; ujrainditasnal nem duplazzuk */
-      if (!running) { running = true; setTimeout(loop, SCAN_GAP_MS); }
+      if (!running) { running = true; scanTimer = setTimeout(loop, SCAN_MS); }
     }).catch(function (e) {
       fail(e && e.message ? e.message : String(e));
     });

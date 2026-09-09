@@ -2,43 +2,81 @@ QR OLVASO -- ONHORDO WEBLAP
 ===========================
 
 MI EZ
-  Egyetlen weblap, ami a telefon kameraval folyamatosan QR kodot keres.
-  Ha talal, megjeleniti a tartalmat egy szovegdobozban; az OK gomb utan
-  a kereses folytatodik.
-
-  Minden konyvtar HELYBEN van (lib/ mappa), tehat a lap internet nelkul
-  is mukodik, es nem fugg semmilyen kulso szolgaltatastol.
+  Egyetlen weblap, ami a telefon kameraval QR kodot keres. Ha talal:
+    - megszolal egy 440 Hz-es hang (3,5 masodperc)
+    - a kod tartalma megjelenik egy szovegdobozban
+    - kepernyoolvasoval: "Kód beolvasva: <tartalom>"
 
 A MAPPA TARTALMA
-  qr-olvaso.html            a weblap
-  robots.txt                a keresomotorok kizarasa
-  lib/jsQR.js               jsQR dekodolo (257 kB)
-  lib/zxing-library.min.js  ZXing JavaScript valtozat (336 kB)
-  lib/zxing-wasm-reader.js  zxing-cpp WebAssembly betolto (38 kB)
-  lib/zxing_reader.wasm     a WebAssembly binaris (1,1 MB)
+  qr-olvaso.html            a weblap (fo szal: csak a felulet)
+  lib/decoder-worker.js     a dekodolo, KULON SZALON
+  lib/jsQR.js               a dekodolo konyvtar (a worker tolti be)
+  robots.txt                a keresok kizarasa
 
-  A teljes mappat kell feltolteni, a szerkezet megtartasaval!
-  Ha a lib/ mappa hianyzik, a lap betoltodik, de nem fog dekodolni.
+MIERT WEB WORKER? -- EZ A LEGFONTOSABB
+  Az elozo valtozatok hasznalhatatlanok voltak VoiceOverrel: a kamera
+  engedelyezese utan minden elnemult, a gombokat nem lehetett
+  megnyomni, a kepernyo mintha zarolva lett volna.
+
+  Az ok: a QR-dekodolas SZINKRON es lassu (merve: 58 ms tiszta kepen,
+  akar 1000 ms mintas hatteren), es a fo szalon futott. Az MDN igy
+  fogalmaz: "a hosszan futo JavaScript-fuggvenyek blokkoljak a szalat,
+  ami valaszkeptelen laphoz vezet... hacsak nem hasznalsz szandekosan
+  web workert, a JavaScript a fo szalon fut, igy konnyen kesleltetheti
+  az esemenyfeldolgozast".
+
+  A fo szal ugyanaz, amelyik a koppintasokat kezeli ES amelyiken a
+  VoiceOver dolgozik a lappal. Ha az foglalt, se a gomb nem mukodik,
+  se a felolvasas.
+
+  MOST: a dekodolas a lib/decoder-worker.js-ben, KULON SZALON fut.
+  A fo szal csak atadja a kepkockat (transfer, tehat meg masolas
+  sincs), es azonnal visszater. Vegig valaszkepes marad.
+
+SEBESSEG -- A LAP TETEJEN ALLITHATO
+  A "Sebesseg" gomb harom allast jar korbe:
+      Gyors     150 ms-onkent   (alapertelmezes)
+      Kozepes  1000 ms-onkent
+      Lassu   10000 ms-onkent   <-- KEPERNYOOLVASOHOZ
+  A Lassu beallitas 10 masodpercenkent vizsgal egyszer. Ez boven eleg,
+  ha a kodot odatartod, es kozben a keszulek szinte semmit nem dolgozik.
+
+  A gomb a lap tetejen van, Tab-bal ELSOKENT elerheto.
+  Felolvasva: "Sebesség: Gyors. Koppints a váltáshoz: gyors, közepes
+  vagy lassú. A lassú beállítás képernyőolvasóhoz való."
 
 HTTPS KELL -- MINDEN BONGESZOBEN
-  A kamerahozzaferes (getUserMedia) a webszabvany szerint csak
-  "biztonsagos kornyezetben" mukodik: https:// vagy http://localhost.
-  Ez NEM Safari-sajatossag: a Chrome, a Firefox es az Edge is igy
-  mukodik, minden platformon. iPhone-on a Firefox es a Chrome ugyanugy
-  HTTPS-t kovetel, mint a Safari.
-
+  A kamerahozzaferes (getUserMedia) csak "biztonsagos kornyezetben"
+  mukodik: https:// vagy http://localhost. Ez NEM Safari-sajatossag:
+  a Chrome, a Firefox es az Edge is igy mukodik. iPhone-on a Firefox
+  es a Chrome ugyanugy HTTPS-t kovetel.
   Egy "file://" utvonalon megnyitott HTML NEM kap kamerat.
 
-HOVA TEGYEM
-  a) GitHub Pages   -- ingyenes, automatikus HTTPS  (lasd a leirast)
-  b) Netlify Drop   -- a mappat behuzod, azonnal kapsz HTTPS cimet
-  c) sajat gep      -- Caddy vagy nginx + Tailscale / Let's Encrypt
+  FONTOS: a Web Worker sem tolthetó be file:// utvonalrol! A lapot
+  MINDENKEPPEN kiszolgalorol kell megnyitni.
 
-MELYIK DEKODOLOT HASZNALJA
-  Meressel (117 kodos A4 lapok, tobbfele torzitas) ez a sorrend jott ki:
-    1. zxing-wasm (zxing-cpp)  76-83%  -- a fo dekodolo
-    2. natív BarcodeDetector           -- iPhone-on NEM letezik
-    3. ZXing-js                        -- tartalek
-    4. jsQR                            -- vegso tartalek
-  A lap mind a negyet vegigprobalja, tobb kepvaltozattal (eredeti,
-  kontrasztnovelt, kozepre vagott).
+GOMBOK
+  "Sebesség: ..."                    a lap tetejen, a vizsgalati koz
+  "Másolás"                          a szoveg a vagolapra
+  "Felismerés folytatása"            a panel bezarul, a kereses megy tovabb
+  "Felismerés megszakítása, bezárás" a KAMERA IS kikapcsol
+  "Felismerés indítása"              ujraindit a megszakitas utan
+  Esc billentyu = "Felismerés folytatása"
+
+AKADALYMENTESSEG (WCAG 2.2)
+  - <h1>/<h2> cimsorok, <label> a szovegdobozhoz
+  - a talalatot aria-live="polite" regio mondja be (NEM assertive:
+    az megszakitana a folyamatban levo felolvasast)
+  - a sebessegkijelzo aria-hidden: egy masodpercenkent valtozo szam
+    SOHA nem lehet elo regio, mert folyamatosan felbeszakitja magat
+  - a szovegdoboz readonly (NEM disabled): igy fokuszalhato es
+    felolvashato
+  - lathato fokuszkeret, 48x48 px-es gombok
+  - kontrasztaranyok: 4,91:1 -- 18,10:1 (WCAG 1.4.3: 4,5 kell)
+  - WCAG 1.4.2: a 3,5 mp-es hangot mindket also gomb leallitja
+
+TESZTELVE (jsdom, mockolt bongeszo-API-k)
+  7 bongeszoprofil: mind OK
+  16 mukodesi ellenorzes: 16/16
+  9 worker-ellenorzes: 9/9
+  A valodi Safari-tesztet ez NEM potolja.
