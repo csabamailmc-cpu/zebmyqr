@@ -104,38 +104,103 @@
   }
   .row { display: flex; gap: 10px; margin-top: 12px; }
   button {
-    flex: 1; padding: 14px; font-size: 17px; font-weight: 600;
-    border: 0; border-radius: 10px; background: #0a84ff; color: #fff;
+    /* min-height 48px: WCAG 2.5.8 (Target Size, Minimum) 24x24 CSS px-et
+       ker, a 2.5.5 (Enhanced) 44x44-et -- ez mindkettonek megfelel */
+    flex: 1; min-height: 48px; padding: 14px; font-size: 17px; font-weight: 600;
+    border: 0; border-radius: 10px; color: #fff;
+    /* #0a84ff feher szoveggel csak 3,65:1 -> WCAG 1.4.3 BUKIK, mert a
+       17px felkover nem szamit "nagy szovegnek" (ahhoz 18,66px kell).
+       A #0a6fd8 mar 4,91:1. */
+    background: #0a6fd8;
   }
-  button.sec { background: #3a3a3c; }
+  button.sec { background: #3a3a3c; }   /* 11,35:1 */
+  /* WCAG 2.4.7 (Focus Visible) + 2.4.13 (Focus Appearance) */
+  a:focus-visible, button:focus-visible, textarea:focus-visible {
+    outline: 3px solid #ffd60a; outline-offset: 2px;
+  }
+  /* WCAG 1.4.11: a nem-szoveges elemek kontrasztja >= 3:1 */
+  #frame { border-color: rgba(255,255,255,.85); }
+  #frame.hit { border-color: #35d07f; }   /* 9,42:1 a hatteren */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
   #meta { font-size: 13px; color: #9a9a9e; margin-top: 8px; }
-  #err {
+  #err, #stopped {
     position: absolute; inset: 0; display: none; place-items: center;
     padding: 24px; text-align: center; background: #111;
   }
-  #err.show { display: grid; }
+  #err.show, #stopped.show { display: grid; }
+  #stopped button { max-width: 320px; margin-top: 18px; }
   a { color: #0a84ff; }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <video id="v" playsinline muted autoplay></video>
-  <div id="frame"></div>
+  <h1 class="sr-only">QR-kód olvasó</h1>
+
+  <!-- A videokep dekorativ a kepernyoolvaso szamara: a tartalmat nem
+       tudja felolvasni, es a hasznos informaciot (a dekodolt szoveget)
+       a lenti panel adja. Ezert aria-hidden. -->
+  <video id="v" playsinline muted autoplay aria-hidden="true"></video>
+  <div id="frame" aria-hidden="true"></div>
+
   <div id="bar">
-    <span id="status">Indulás…</span>
+    <!-- WCAG 4.1.3 (Status Messages): a sebesseg valtozasat NE
+         szakitsa felbe a felolvasast -> aria-live="off", de kerdesre
+         felolvashato. A talalatot viszont azonnal jelezzuk (lasd lent). -->
+    <span id="status" role="status" aria-live="off">Indulás…</span>
     <span id="engine"></span>
   </div>
 
-  <div id="panel">
-    <textarea id="out" readonly></textarea>
-    <div id="meta"></div>
+  <!-- Ez a regio hangosan bemondja a talalatot. Kulon van a panelt61,
+       hogy a kepernyoolvaso akkor is elmondja, ha a fokusz mashol van. -->
+  <p id="announce" role="status" aria-live="assertive" class="sr-only"></p>
+
+  <!-- role="dialog": a talalat egy parbeszedpanel. aria-modal="false",
+       mert a kamerakep alatta tovabbra is lathato marad. -->
+  <div id="panel" role="dialog" aria-modal="false"
+       aria-labelledby="panel-cim" aria-describedby="meta">
+    <h2 id="panel-cim" class="sr-only">A beolvasott kód tartalma</h2>
+    <!-- MIERT textarea es nem <output> vagy <p>?
+         Mert igy a szoveg kijelolheto es masolhato -- ez a fo cel.
+         FONTOS: "readonly", NEM "disabled": a disabled elemet a
+         kepernyoolvaso kihagyja es nem is fokuszalhato. A readonly
+         viszont fokuszalhato, felolvashato es masolhato.
+         A tartalom valtozasat a #announce elo regio mondja be, mert a
+         textarea ertekvaltozasat a kepernyoolvasok nem jelzik maguktol. -->
+    <label for="out" class="sr-only">A beolvasott kód szövege</label>
+    <textarea id="out" rows="3" readonly spellcheck="false"
+      autocapitalize="off" autocorrect="off"
+      aria-describedby="meta"></textarea>
+    <p id="meta"></p>
     <div class="row">
-      <button id="copy" class="sec">Másolás</button>
-      <button id="ok">OK</button>
+      <button id="copy" class="sec" type="button">
+        Másolás<span class="sr-only"> a vágólapra</span>
+      </button>
+      <!-- WCAG 1.4.2 (Audio Control): a 3,5 masodperces hang tobb mint
+           3 masodpercig szol, ezert KELL egy elerheto leallito vezerlo.
+           Ez az OK gomb, es a felirata ki is mondja. -->
+      <button id="go" type="button">
+        Felismerés folytatása<span class="sr-only">, a hang leállítása</span>
+      </button>
+    </div>
+    <div class="row">
+      <button id="stop" class="sec" type="button">
+        Felismerés megszakítása, bezárás<span class="sr-only">, a kamera kikapcsolása</span>
+      </button>
     </div>
   </div>
 
-  <div id="err">
+  <div id="stopped" role="dialog" aria-modal="false" aria-labelledby="stop-cim">
+    <div>
+      <h2 id="stop-cim">A felismerés leállítva</h2>
+      <p>A kamera ki van kapcsolva. Az újraindításhoz nyomd meg az alábbi gombot.</p>
+      <button id="restart" type="button">Felismerés indítása</button>
+    </div>
+  </div>
+
+  <div id="err" role="alert">
     <div>
       <h2>Nincs kamerakép</h2>
       <p id="errmsg"></p>
@@ -272,6 +337,13 @@
   var out     = document.getElementById('out');
   var meta    = document.getElementById('meta');
   var status  = document.getElementById('status');
+  var announce= document.getElementById('announce');
+  var goBtn      = document.getElementById('go');
+  var stopBtn    = document.getElementById('stop');
+  var restartBtn = document.getElementById('restart');
+  var stoppedBox = document.getElementById('stopped');
+  var camStream  = null;    // a kamera folyama, hogy le tudjuk allitani
+  var running    = false;   // fut-e a kereses ciklusa
   var engineEl= document.getElementById('engine');
   var frame   = document.getElementById('frame');
   var errBox  = document.getElementById('err');
@@ -284,7 +356,14 @@
 
   // --- vaszon a kepkockak feldolgozasahoz ---
   var cv = document.createElement('canvas');
-  var cx = cv.getContext('2d', { willReadFrequently: true });
+  /* A getContext NULL-t is visszaadhat (memoriahiany, tul sok vaszon,
+     egyes bongeszok korlatozasai). Enelkul a lap az elso kepkockan
+     osszeomlana. A masodik hivas a 'willReadFrequently' nelkul azert
+     van, mert azt a regebbi Safari nem ismeri -- ilyenkor is mukodik,
+     csak lassabban. */
+  var cx = null;
+  try { cx = cv.getContext('2d', { willReadFrequently: true }); } catch (e) { cx = null; }
+  if (!cx) { try { cx = cv.getContext('2d'); } catch (e) { cx = null; } }
 
   // --- A) natív BarcodeDetector ---
   var native = null;
@@ -345,7 +424,19 @@
 
   // --- elofeldolgozas: kontraszt novelese ---
   function boost(src) {
-    var d = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
+    /* Az "new ImageData(...)" konstruktor csak Safari 12.1+ ota letezik.
+       A cx.createImageData() viszont a Canvas 2D legelso verzioja ota
+       megvan, minden bongeszoben. Ezert azt hasznaljuk, es csak akkor
+       esunk vissza a konstruktorra, ha nincs vaszon. */
+    var d;
+    if (cx && cx.createImageData) {
+      d = cx.createImageData(src.width, src.height);
+      d.data.set(src.data);
+    } else if (typeof ImageData === 'function') {
+      d = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
+    } else {
+      return src;                 // nincs mod masolatot keszitani
+    }
     var p = d.data, i, y;
     for (i = 0; i < p.length; i += 4) {
       y = (p[i] * 0.299 + p[i+1] * 0.587 + p[i+2] * 0.114);
@@ -390,6 +481,7 @@
   }
 
   function grab() {
+    if (!cx) return null;                 // nincs hasznalhato vaszon
     var w = video.videoWidth, h = video.videoHeight;
     if (!w || !h) return null;
     /* teljes kep, legfeljebb 480 px szeles. A merés szerint a
@@ -422,6 +514,10 @@
     paused = true;
     lastHitText = text;
     lastHitTime = Date.now();
+    /* WCAG 4.1.3: a talalatot azonnal bemondjuk. Az aria-live="assertive"
+       megszakitja a folyamatban levo felolvasast -- itt ez indokolt,
+       mert ez a lap egyetlen lenyeges esemenye. */
+    announce.textContent = 'Kód beolvasva: ' + text;
     lastText = text;
     out.value = text;
     meta.textContent = how + '  ·  ' + text.length + ' karakter';
@@ -429,15 +525,50 @@
     frame.classList.add('hit');
     if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
     beepStart();
+    if (!actx) {
+      /* Nem sikerult feloldani a hangot: iOS-en ehhez egy koppintas kell.
+         Ezt kiirjuk, hogy a felhasznalo ne higgye hibanak. */
+      meta.textContent += '  ·  a hangjelzéshez koppints egyszer a képernyőre';
+    }
+    /* WCAG 2.4.3 (Focus Order): a fokusz kerüljon a panelre, hogy a
+       billentyuzetes es kepernyoolvasos hasznalo azonnal ott legyen. */
+    try { goBtn.focus(); } catch (e) {}
   }
 
-  document.getElementById('ok').addEventListener('click', function () {
+  goBtn.addEventListener('click', function () {
     beepStop();
     panel.classList.remove('show');
     frame.classList.remove('hit');
+    announce.textContent = 'Keresés folytatódik.';
     lastText = null;
     cooldownUntil = Date.now() + COOLDOWN_MS;
     paused = false;
+  });
+
+  /* "Felismerés megszakítása, bezárás" -- a KAMERA IS kikapcsol.
+     Ez fontos: a keszulek kamerajelzo fenye addig eg, amig a folyam el,
+     ezert nem eleg csak a keresest szuneteltetni. */
+  function stopAll() {
+    beepStop();
+    paused = true; running = false;
+    panel.classList.remove('show');
+    frame.classList.remove('hit');
+    if (camStream) {
+      try { camStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      camStream = null;
+    }
+    try { video.srcObject = null; } catch (e) {}
+    stoppedBox.classList.add('show');
+    status.textContent = 'Leállítva';
+    announce.textContent = 'A felismerés leállítva, a kamera kikapcsolva.';
+    try { restartBtn.focus(); } catch (e) {}
+  }
+  stopBtn.addEventListener('click', stopAll);
+
+  restartBtn.addEventListener('click', function () {
+    stoppedBox.classList.remove('show');
+    announce.textContent = 'A felismerés újraindul.';
+    startCamera();
   });
 
   document.getElementById('copy').addEventListener('click', function () {
@@ -445,6 +576,14 @@
     if (navigator.clipboard) navigator.clipboard.writeText(lastText);
     else { out.removeAttribute('readonly'); out.select();
            document.execCommand('copy'); out.setAttribute('readonly',''); }
+    /* WCAG 4.1.3: a masolas sikere kulonben csak vizualisan latszana */
+    announce.textContent = 'A szöveg a vágólapra másolva.';
+  });
+
+  /* WCAG 2.1.1 (Keyboard): Esc is bezarja a panelt es leallitja a hangot */
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (panel.classList.contains('show')) { goBtn.click(); }
   });
 
   function loop() {
@@ -474,19 +613,19 @@
         fps = Math.round(fpsN * 1000 / (nowT - fpsT0));
         fpsT0 = nowT; fpsN = 0;
         status.textContent = 'Keresés…  ' + fps + ' vizsgálat/mp';
+        status.setAttribute('aria-label', 'Keresés folyamatban, ' + fps + ' vizsgálat másodpercenként');
       }
     }
-    requestAnimationFrame(loop);
+    if (running) requestAnimationFrame(loop);
   }
 
   function fail(msg) {
     errMsg.textContent = msg;
     errBox.classList.add('show');
+    announce.textContent = 'Hiba: nincs kamerakép. ' + msg;
   }
 
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    fail('A böngésző nem támogatja a kamerát, vagy a lap nem HTTPS címen fut.');
-  } else {
+  function startCamera() {
     navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
@@ -495,20 +634,37 @@
         height: { ideal: 1080 }
       }
     }).then(function (stream) {
+      camStream = stream;               // eltesszuk, hogy le tudjuk allitani
       video.srcObject = stream;
       return video.play();
     }).then(function () {
       var eng = [];
       if (window.__zxingWasm) eng.push('zxing-wasm');
       if (native) eng.push('natív');
-      if (zxing)  eng.push('ZXing');
+      if (zxing)  eng.push('ZXing-js');
       if (window.jsQR) eng.push('jsQR');
       engineEl.textContent = eng.join(' + ');
-      status.textContent = 'Keresés…';
-      requestAnimationFrame(loop);
+      engineEl.setAttribute('aria-label', 'Használt dekódolók: ' + eng.join(', '));
+      /* A hangkimenet feloldasa: egyes bongeszokben a kamera-engedely
+         megadasa is felhasznaloi gesztusnak szamit, ezert itt is
+         megprobaljuk. Ha nem sikerul, az elso kepernyo-koppintas oldja
+         fel (lasd a lenti esemenyfigyelot). */
+      audioUnlock();
+      status.textContent = cx ? 'Keresés…' : 'Hiba: a rajzvászon nem érhető el';
+      if (!cx) announce.textContent = 'Hiba: a böngésző nem adott rajzvásznat, a felismerés nem működik.';
+      paused = false;
+      cooldownUntil = Date.now() + COOLDOWN_MS;
+      /* a ciklust csak egyszer inditjuk el; ujrainditasnal nem duplazzuk */
+      if (!running) { running = true; requestAnimationFrame(loop); }
     }).catch(function (e) {
       fail(e && e.message ? e.message : String(e));
     });
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    fail('A böngésző nem támogatja a kamerát, vagy a lap nem HTTPS címen fut.');
+  } else {
+    startCamera();
   }
 })();
 </script>
