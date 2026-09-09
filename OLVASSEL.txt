@@ -10,7 +10,9 @@ MI EZ
 A MAPPA TARTALMA
   qr-olvaso.html            a weblap (fo szal: csak a felulet)
   lib/decoder-worker.js     a dekodolo, KULON SZALON
-  lib/jsQR.js               a dekodolo konyvtar (a worker tolti be)
+  lib/zxing-wasm-reader.js  ZXing (zxing-cpp) betolto -- FO dekodolo
+  lib/zxing_reader.wasm     a ZXing WebAssembly binarisa (1,1 MB)
+  lib/jsQR.js               jsQR -- tartalek dekodolo
   robots.txt                a keresok kizarasa
 
 MIERT WEB WORKER? -- EZ A LEGFONTOSABB
@@ -62,6 +64,87 @@ GOMBOK
   "Felismerés megszakítása, bezárás" a KAMERA IS kikapcsol
   "Felismerés indítása"              ujraindit a megszakitas utan
   Esc billentyu = "Felismerés folytatása"
+
+JAVITAS -- A SZOVEGDOBOZ FELOLVASASA
+  Korabban a szovegdoboz aria-describedby-jal a diagnosztikai szovegre
+  mutatott, ezert a kepernyoolvaso a kod utan felolvasta, hogy
+  "jsQR külön szálon, 15 karakter". Ez semmit nem mondott a kodrol.
+  JAVITAS: a diagnosztikai sor aria-hidden, tehat csak a szemnek szol.
+
+  AMIT MOST A VOICEOVER BEMOND:
+    elo regio:  "Kód beolvasva, 15 karakter: TESZT-KOD-00042"
+    a panelen vegigmenve:
+      "A beolvasott kód tartalma"                      (cim)
+      "A beolvasott kód szövege, TESZT-KOD-00042,
+       csak olvasható szövegmező"
+      "Másolás a vágólapra, gomb"
+      "Felismerés folytatása, a hang leállítása, gomb"
+      "Felismerés megszakítása, bezárás,
+       a kamera kikapcsolása, gomb"
+  A diagnosztikai sor ("15 karakter · jsQR (külön szálon)") csak
+  lathato, nem hallhato.
+
+ROSSZ FENYVISZONYOK -- MIERT JOBB A QRbot, ES MIT TETTUNK ERTE
+  A QRbot azert ismer fel sotetben szinte azonnal, mert a natív
+  kamera API-hoz fer hozza: allitja a fokuszt, az expozíciót, es be
+  tudja kapcsolni a lampát. A bongeszo ebbol keveset enged.
+  Amit meg tudtunk tenni:
+
+  1. ZXing (zxing-cpp) A FO DEKODOLO -- ez a legnagyobb nyereseg
+     A ZXing HybridBinarizer-t hasznal: a kepet kis blokkokra osztja,
+     es MINDEN BLOKKHOZ KULON szamol fekete-feher hatart. Ezert birja
+     az egyenetlen megvilagitast (arnyek, egyoldali feny, sotet).
+     A jsQR ezzel szemben az EGESZ kepre EGY hatart szamol -- ezert
+     bukik el hamar rossz fenyben.
+     A worker eloszor a ZXinget probalja, es csak ha az nem talal,
+     akkor a jsQR-t.
+     A tryHarder + tryRotate bekapcsolva: lassabb, de sokkal tobbet
+     talal meg rossz fenyben es ferden.
+
+  2. LAMPA GOMB (torch)
+     Ha a keszulek tamogatja, a lap tetejen megjelenik a "Lámpa" gomb.
+     Ez a leggyorsabb megoldas sotetben.
+     FIGYELEM: Android Chrome-ban altalaban mukodik, iOS Safariban
+     JELENLEG NEM -- ott a gomb el sem jelenik meg.
+
+  3. KAMERABEALLITASOK
+     focusMode: continuous        folyamatos autofokusz
+     exposureMode: continuous     folyamatos expozicio
+     whiteBalanceMode: continuous folyamatos feherEgyensuly
+     Ezek "ideal" kerések: ha a bongeszo nem tudja, nem hibazik.
+
+  AMIT NEM TUDUNK MEGTENNI
+     A bongeszo nem enged hozzafernünk a nyers kamerajelhez, a
+     zaj csokkenteshez, a hosszabb expozicios idohoz. Ezekben a
+     natív alkalmazasok (QRbot) mindig elonyben lesznek.
+     Ha sotetben kell dolgozni es van QRbot, azt hasznald.
+
+MODALIS IZOLACIO -- MIT HALL A FELHASZNALO TALALATKOR
+  Amig a talalati panel nyitva van, a lap TOBBI resze nem letezik a
+  kepernyoolvaso szamara: se a sebessegvalto, se a statuszsav, se a
+  kamerakep, se a karakterszam. Csak ez:
+
+     bemondas:  "Kód beolvasva, 15 karakter: TESZT-KOD-00042"
+     1. "A beolvasott kód tartalma"                         (cim)
+     2. "A beolvasott kód szövege, TESZT-KOD-00042,
+         csak olvasható szövegmező"
+     3. "Felismerés folytatása, a hang leállítása, gomb"
+     4. "Másolás a vágólapra, gomb"
+     5. "Megszakítás, a felismerés leállítása és a kamera
+         kikapcsolása, gomb"
+
+  A panel nyitva allapotaban a kepernyoolvaso PONTOSAN negy elemet
+  talal: a kod szoveget, a "Felismerés folytatása", a "Másolás" es a
+  "Megszakítás" gombot. A sebessegvalto es a lampa gomb ilyenkor
+  inert (kikerul a fokuszsorrendbol ES a felolvaso fajabol is).
+
+  A "Felismerés folytatása" KOZVETLENUL a kod szovege utan all, mert
+  az a leggyakoribb muvelet. A masik ket gomb utana kovetkezik:
+  elerhetok maradnak (kulonben hasznalhatatlanok lennenek), de nem
+  szolnak bele az elso ket bemondasba.
+
+  A panel bezarasa utan minden visszaall, es a nem lathato panelek
+  ("Felismerés indítása", "Nincs kamerakép") sem talalhatok meg.
 
 AKADALYMENTESSEG (WCAG 2.2)
   - <h1>/<h2> cimsorok, <label> a szovegdobozhoz

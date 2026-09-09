@@ -100,6 +100,7 @@
     background: #3a3a3c;
   }
   .topbtn[aria-pressed="true"] { background: #0a6fd8; }
+  .topbtn2 { top: calc(102px + env(safe-area-inset-top)); }
   #bar {
     position: absolute; left: 0; right: 0; top: 0; padding: 10px 14px;
     background: rgba(0,0,0,.55); font-size: 14px; display: flex;
@@ -162,6 +163,9 @@
   <!-- Kimelo mod: ritkabb vizsgalat, hogy a kepernyoolvaso zavartalanul
        beszelhessen. A gomb a lap tetejen van, hogy Tab-bal elsokent
        elerheto legyen. -->
+  <button id="torch" type="button" class="topbtn topbtn2" aria-pressed="false"
+          style="display:none">Lámpa<span class="sr-only">, a készülék lámpájának be- és kikapcsolása sötétben</span></button>
+
   <button id="speed" type="button" class="topbtn">Sebesség: Gyors<span class="sr-only">. Koppints a váltáshoz: gyors, közepes vagy lassú. A lassú beállítás képernyőolvasóhoz való.</span>
   </button>
 
@@ -353,6 +357,7 @@
   var stopBtn    = document.getElementById('stop');
   var restartBtn = document.getElementById('restart');
   var stoppedBox = document.getElementById('stopped');
+  var torchBtn   = document.getElementById('torch');
   var camStream  = null;    // a kamera folyama, hogy le tudjuk allitani
   var running    = false;   // fut-e a kereses ciklusa
   var engineEl= document.getElementById('engine');
@@ -453,11 +458,30 @@
         if (hidden) {
           el.setAttribute('data-was-hidden', el.getAttribute('aria-hidden') || '');
           el.setAttribute('aria-hidden', 'true');
+          /* Az "inert" a modern, szabvanyos mod: az elem es minden
+             leszarmazottja kikerul a fokuszsorrendbol ES a
+             kepernyoolvaso fajabol. Ahol nincs tamogatva, ott az
+             aria-hidden + tabindex=-1 vegzi ugyanezt. */
+          try { el.inert = true; } catch (e) {}
+          var fs = el.querySelectorAll ? el.querySelectorAll('button,a,input,textarea,select,[tabindex]') : [];
+          for (var k = 0; k < fs.length; k++) {
+            if (fs[k].getAttribute('tabindex') === null) fs[k].setAttribute('data-ti', '');
+            else fs[k].setAttribute('data-ti', fs[k].getAttribute('tabindex'));
+            fs[k].setAttribute('tabindex', '-1');
+          }
         } else {
           var prev = el.getAttribute('data-was-hidden');
           if (prev) el.setAttribute('aria-hidden', prev);
           else el.removeAttribute('aria-hidden');
           el.removeAttribute('data-was-hidden');
+          try { el.inert = false; } catch (e) {}
+          var fr = el.querySelectorAll ? el.querySelectorAll('[data-ti]') : [];
+          for (var j = 0; j < fr.length; j++) {
+            var t = fr[j].getAttribute('data-ti');
+            if (t === '') fr[j].removeAttribute('tabindex');
+            else fr[j].setAttribute('tabindex', t);
+            fr[j].removeAttribute('data-ti');
+          }
         }
       }
       node = parent;
@@ -532,6 +556,36 @@
   /* "Felismerés megszakítása, bezárás" -- a KAMERA IS kikapcsol.
      Ez fontos: a keszulek kamerajelzo fenye addig eg, amig a folyam el,
      ezert nem eleg csak a keresest szuneteltetni. */
+  /* ===================================================================
+     LAMPA (TORCH)
+     -------------------------------------------------------------------
+     A leggyorsabb megoldas sotetben. A bongeszo csak akkor engedi, ha
+     a keszulek tamogatja -- Android Chrome-ban altalaban igen,
+     iOS Safariban jelenleg NEM. Ha nincs, a gomb el sem jelenik meg.
+     =================================================================== */
+  var torchTrack = null, torchOn = false;
+  function setupTorch(stream) {
+    torchTrack = null; torchOn = false;
+    torchBtn.style.display = 'none';
+    try {
+      var tr = stream.getVideoTracks()[0];
+      if (!tr || !tr.getCapabilities) return;
+      var caps = tr.getCapabilities();
+      if (caps && caps.torch) { torchTrack = tr; torchBtn.style.display = ''; }
+    } catch (e) { torchTrack = null; }
+  }
+  function toggleTorch() {
+    if (!torchTrack) return;
+    torchOn = !torchOn;
+    torchTrack.applyConstraints({ advanced: [{ torch: torchOn }] })
+      .then(function () {
+        torchBtn.setAttribute('aria-pressed', torchOn ? 'true' : 'false');
+        torchBtn.firstChild.nodeValue = torchOn ? 'Lámpa be' : 'Lámpa';
+        announce.textContent = torchOn ? 'Lámpa bekapcsolva.' : 'Lámpa kikapcsolva.';
+      })
+      .catch(function () { torchOn = !torchOn; });
+  }
+
   function stopAll() {
     beepStop();
     setOutsideHidden(false);
@@ -554,6 +608,8 @@
 
   /* Kimelo mod: ritkabb vizsgalat. Ha a felhasznalo kepernyoolvasoval
      dolgozik, ez adja vissza a keszulek valaszkeszseget. */
+  torchBtn.addEventListener('click', toggleTorch);
+
   var speedBtn = document.getElementById('speed');
   speedBtn.addEventListener('click', function () {
     speedIdx = (speedIdx + 1) % SPEEDS.length;
@@ -620,16 +676,26 @@
   }
 
   function startCamera() {
+    /* ROSSZ FENYVISZONYOK -- kamerabeallitasok
+       A telefonos QR-olvasok (pl. QRbot) azert jobbak sotetben, mert
+       a natív kamera API-n keresztul allitjak a fokuszt, az expozíciót
+       es a lampát. A bongeszo ezekbol keveset enged, de amit lehet,
+       megkerjuk. Az "ideal" azt jelenti: ha nem tudja, ne hibazzon. */
     navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         facingMode: { ideal: 'environment' },   // hatso kamera
         width:  { ideal: 1920 },
-        height: { ideal: 1080 }
+        height: { ideal: 1080 },
+        /* folyamatos autofokusz: kozelrol a legfontosabb */
+        focusMode:    { ideal: 'continuous' },
+        exposureMode: { ideal: 'continuous' },
+        whiteBalanceMode: { ideal: 'continuous' }
       }
     }).then(function (stream) {
       camStream = stream;               // eltesszuk, hogy le tudjuk allitani
       video.srcObject = stream;
+      setupTorch(stream);
       return video.play();
     }).then(function () {
       var eng = [];
