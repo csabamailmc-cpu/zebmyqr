@@ -184,7 +184,7 @@
   <!-- role="dialog": a talalat egy parbeszedpanel. aria-modal="false",
        mert a kamerakep alatta tovabbra is lathato marad. -->
   <div id="panel" role="dialog" aria-modal="false"
-       aria-labelledby="panel-cim" aria-describedby="meta">
+       aria-labelledby="panel-cim">
     <h2 id="panel-cim" class="sr-only">A beolvasott kód tartalma</h2>
     <!-- MIERT textarea es nem <output> vagy <p>?
          Mert igy a szoveg kijelolheto es masolhato -- ez a fo cel.
@@ -195,9 +195,14 @@
          textarea ertekvaltozasat a kepernyoolvasok nem jelzik maguktol. -->
     <label for="out" class="sr-only">A beolvasott kód szövege</label>
     <textarea id="out" rows="3" readonly spellcheck="false"
-      autocapitalize="off" autocorrect="off"
-      aria-describedby="meta"></textarea>
-    <p id="meta"></p>
+      autocapitalize="off" autocorrect="off"></textarea>
+
+    <!-- FEJLESZTOI INFORMACIO, NEM A FELHASZNALONAK.
+         Korabban a szovegdoboz aria-describedby-jal erre mutatott, ezert
+         a kepernyoolvaso a kod utan felolvasta, hogy "jsQR külön szálon,
+         15 karakter". Ez zavaro volt es semmit nem mondott a kodrol.
+         Most aria-hidden: csak a szemnek szol. -->
+    <p id="meta" aria-hidden="true"></p>
     <div class="row">
       <button id="copy" class="sec" type="button">
         Másolás<span class="sr-only"> a vágólapra</span>
@@ -430,18 +435,22 @@
     lastHitTime = Date.now();
     /* WCAG 4.1.3: a talalatot bemondjuk. POLITE: megvarja, amig a
        kepernyoolvaso befejezi az eppen folyo mondatot. */
-    announce.textContent = 'Kód beolvasva: ' + text;
+    /* A bemondas SZOROSAN a kod tartalma, semmi mas. A hosszt is
+       elmondjuk, mert kepernyoolvasoval nem lathato a doboz merete. */
+    announce.textContent = 'Kód beolvasva, ' + text.length + ' karakter: ' + text;
     lastText = text;
     out.value = text;
-    meta.textContent = how + '  ·  ' + text.length + ' karakter';
+    /* A dekodolo neve fejlesztoi adat: a felso, aria-hidden statuszsavba
+       kerul, nem a talalat melle. Itt csak az marad, ami a felhasznalot
+       erdekli: hany karakter a kod. */
+    meta.textContent = text.length + ' karakter  ·  ' + how;
     panel.classList.add('show');
     frame.classList.add('hit');
     if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
     beepStart();
     if (!actx) {
-      /* Nem sikerult feloldani a hangot: iOS-en ehhez egy koppintas kell.
-         Ezt kiirjuk, hogy a felhasznalo ne higgye hibanak. */
-      meta.textContent += '  ·  a hangjelzéshez koppints egyszer a képernyőre';
+      /* Nem sikerult feloldani a hangot: iOS-en ehhez egy koppintas kell. */
+      meta.textContent += '  ·  a hangjelzéshez koppints a képernyőre';
     }
     /* WCAG 2.4.3 (Focus Order): a fokusz kerüljon a panelre, hogy a
        billentyuzetes es kepernyoolvasos hasznalo azonnal ott legyen. */
