@@ -14,7 +14,8 @@
     a lap tetejen allithato). Ha sikerul dekodolni:
       - megszolal egy 440 Hz-es hang (alapbeallitas: 1,2 masodperc)
       - a kod tartalma megjelenik egy szovegdobozban
-      - a lap MEGKERDEZI: "Újabb kód felismerés, igen vagy nem?"
+      - a fokusz a szovegmezore kerul, a VoiceOver felolvassa a kodot
+        es a kerdest: "Újabb kód felismerés, igen vagy nem?"
           Igen  -> a panel bezarul, a kereses folytatodik
           Nem   -> a kereses leall, a KAMERA IS kikapcsol
     A hang frekvenciaja, hossza es hangereje a szkript elejen allithato
@@ -160,8 +161,13 @@
   <button id="torch" type="button" class="topbtn topbtn2" aria-pressed="false"
           style="display:none">Lámpa<span class="sr-only">, a készülék lámpájának be- és kikapcsolása sötétben</span></button>
 
+  <!-- SEBESSEG GOMB -- KIKAPCSOLVA (2026-10-22).
+       A vizsgalati koz fixen SPEEDS[0] (2 masodperc). Ha vissza kell
+       tenni: vedd ki ezt a megjegyzes-jelet a gomb korul; a szkriptben
+       a kezelo mar feltetelesen fut (if (speedBtn) ...), mas nem kell.
   <button id="speed" type="button" class="topbtn">Sebesség: Normál<span class="sr-only">. Koppints a váltáshoz: normál, lassú vagy gyors. A vizsgálat két, öt vagy fél másodpercenként történik.</span>
   </button>
+  -->
 
   <div id="bar">
     <!-- A sebessegkijelzo TISZTAN VIZUALIS. Korabban role="status" volt
@@ -184,7 +190,7 @@
        CSAK a kod szoveget es a gombokat talalja meg. A sebesseg, a
        statusz es a kamerakep ilyenkor nem letezik szamara. -->
   <div id="panel" role="dialog" aria-modal="true"
-       aria-labelledby="panel-cim" aria-describedby="kerdes">
+       aria-labelledby="panel-cim">
     <h2 id="panel-cim" class="sr-only">A beolvasott kód tartalma</h2>
     <!-- MIERT textarea es nem <output> vagy <p>?
          Mert igy a szoveg kijelolheto es masolhato -- ez a fo cel.
@@ -195,7 +201,7 @@
          textarea ertekvaltozasat a kepernyoolvasok nem jelzik maguktol. -->
     <label for="out" class="sr-only">A beolvasott kód szövege</label>
     <textarea id="out" rows="3" readonly spellcheck="false"
-      autocapitalize="off" autocorrect="off"></textarea>
+      autocapitalize="off" autocorrect="off" aria-describedby="kerdes"></textarea>
 
     <!-- FEJLESZTOI INFORMACIO, NEM A FELHASZNALONAK.
          Korabban a szovegdoboz aria-describedby-jal erre mutatott, ezert
@@ -209,12 +215,15 @@
          neve a kerdes -- igy a gombokra lepve a kerdes is elhangzik.
          WCAG 1.4.2: a hangot mindharom gomb leallitja. -->
     <p id="kerdes">Újabb kód felismerés, igen vagy nem?</p>
+    <!-- SORREND: a szovegmezo utan eloszor a "Nem", utana az "Igen"
+         (2026-10-22, kivansagra). A fokuszcsapda es az Esc (= Igen)
+         ettol fuggetlenul mukodik. -->
     <div class="row" role="group" aria-labelledby="kerdes">
-      <button id="go" type="button">
-        Igen<span class="sr-only">, újabb kód felismerése, a keresés folytatódik</span>
-      </button>
       <button id="stop" class="sec" type="button">
         Nem<span class="sr-only">, a felismerés leállítása és a kamera kikapcsolása</span>
+      </button>
+      <button id="go" type="button">
+        Igen<span class="sr-only">, újabb kód felismerése, a keresés folytatódik</span>
       </button>
     </div>
     <div class="row">
@@ -273,8 +282,10 @@
      a hangero 0..1 kozott. Ezek KORABBAN HIANYOZTAK a fajlbol: a
      beepStart() ReferenceError-t dobott, amit a try/catch elnyelt,
      ezert SOHA nem szolt a hang. */
+  var BEEP_ON  = true;   /* false: nincs hangjelzes (csak rezges + felolvasas) */
   var BEEP_HZ  = 440;
-  var BEEP_SEC = 1.2;
+  var BEEP_SEC = 0.35;   /* rovid: a VoiceOver bemondasa elott lecseng,
+                            nem fedi el a beszedet */
   var BEEP_VOL = 0.25;
 
   /* ===================================================================
@@ -329,7 +340,7 @@
   }
 
   function beepStart() {
-    if (!actx) return;
+    if (!BEEP_ON || !actx) return;
     if (actx.state === 'suspended') { try { actx.resume(); } catch (e) {} }
     beepStop();
     try {
@@ -529,15 +540,23 @@
     paused = true;
     lastHitText = text;
     lastHitTime = Date.now();
-    /* WCAG 4.1.3: a talalatot bemondjuk. POLITE: megvarja, amig a
-       kepernyoolvaso befejezi az eppen folyo mondatot. */
-    /* A bemondas SZOROSAN a kod tartalma, semmi mas. A hosszt is
-       elmondjuk, mert kepernyoolvasoval nem lathato a doboz merete. */
-    /* A bemondas: a kod tartalma, majd a kerdes. A fokusz az "Igen"
-       gombra kerul, tehat a VoiceOver ezutan azt mondja: "Igen, újabb kód
-       felismerése..., gomb" -- a kerdes es a valasz egyutt hangzik el. */
-    announce.textContent = 'Kód beolvasva, ' + text.length + ' karakter: ' + text +
-                           '. Újabb kód felismerés, igen vagy nem?';
+    /* FELOLVASAS -- MIERT A SZOVEGMEZORE KERUL A FOKUSZ (2026-10-22)
+       Korabban a kod az aria-live regioba kerult, a fokusz pedig az
+       "Igen" gombra. iOS VoiceOverrel a tapasztalat: a kodot NEM mondta
+       ki, balra kellett lepkedni a szovegmezoig. Az ok: iOS-en az
+       aria-live bemondas megbizhatatlan, ha ugyanabban a pillanatban
+       fokuszvaltas is tortenik (a fokuszalt elem bemondasa felulirja a
+       "polite" sorban allo szoveget), es ha kozben a DOM aria-hidden /
+       inert attributumai is valtoznak.
+       MOST: a fokusz magara a SZOVEGMEZORE kerul. A fokuszalt elem
+       bemondasa iOS-en a legmegbizhatobb ut: "A beolvasott kód szövege,
+       <kod>, csak olvasható szövegmező, Újabb kód felismerés, igen vagy
+       nem?" -- a kerdes a szovegmezo aria-describedby-ja. A readonly
+       textarea iOS-en NEM hozza fel a billentyuzetet.
+       Az elo regio csak rovid jelzest ad ("Kód beolvasva, 11 karakter"),
+       hogy ne mondja ketszer a kodot. Jobbra huzva: a kerdes, Igen, Nem,
+       Masolas. */
+    announce.textContent = 'Kód beolvasva, ' + text.length + ' karakter.';
     lastText = text;
     out.value = text;
     /* A dekodolo neve fejlesztoi adat: csak lathato (aria-hidden). */
@@ -552,11 +571,14 @@
       /* Nem sikerult feloldani a hangot: iOS-en ehhez egy koppintas kell. */
       meta.textContent += '  ·  a hangjelzéshez koppints a képernyőre';
     }
-    /* WCAG 2.4.3 (Focus Order): a fokusz az "Igen" gombra kerul.
-       KESLELTETVE: iOS VoiceOver az eppen most lathatova valt elemre
-       azonnal hivott focus()-t gyakran eldobja (a dialogus meg nincs az
-       akadalymentessegi faban). Egy rovid varakozas utan megbizhato. */
-    setTimeout(function () { try { goBtn.focus(); } catch (e) {} }, 150);
+    /* WCAG 2.4.3 (Focus Order): a fokusz a SZOVEGMEZORE kerul (lasd fent).
+       KESLELTETVE (300 ms): iOS VoiceOver az eppen most lathatova valt
+       elemre azonnal hivott focus()-t gyakran eldobja (a dialogus meg
+       nincs az akadalymentessegi faban), es a rovid hangjelzes is
+       lecseng addigra. preventScroll: ne ugorjon a lap. */
+    setTimeout(function () {
+      try { out.focus({ preventScroll: true }); } catch (e) { try { out.focus(); } catch (e2) {} }
+    }, 300);
   }
 
   /* "Igen": a panel bezarul, a kereses folytatodik. */
@@ -639,8 +661,10 @@
      dolgozik, ez adja vissza a keszulek valaszkeszseget. */
   torchBtn.addEventListener('click', toggleTorch);
 
+  /* A Sebesseg gomb a HTML-ben ki van kommentezve; ha visszateszed,
+     ez a kezelo magatol eletre kel. */
   var speedBtn = document.getElementById('speed');
-  speedBtn.addEventListener('click', function () {
+  if (speedBtn) speedBtn.addEventListener('click', function () {
     speedIdx = (speedIdx + 1) % SPEEDS.length;
     SCAN_MS = SPEEDS[speedIdx].ms;
     speedBtn.firstChild.nodeValue = 'Sebesség: ' + SPEEDS[speedIdx].name;

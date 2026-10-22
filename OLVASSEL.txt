@@ -64,7 +64,30 @@ MIERT WEB WORKER? -- EZ A LEGFONTOSABB
   A fo szal csak atadja a kepkockat (transfer, tehat meg masolas
   sincs), es azonnal visszater. Vegig valaszkepes marad.
 
-SEBESSEG -- A LAP TETEJEN ALLITHATO
+VALTOZASOK 2026-10-22
+  1. A "Sebesseg" gomb KIKOMMENTEZVE (fix 2 mp-es vizsgalati koz).
+     Visszatetel: a qr-olvaso.html-ben a gomb koruli <!-- --> jelet
+     vedd ki; a szkript kezeloje feltetelesen fut, mas teendo nincs.
+  2. FELOLVASAS JAVITASA: talalat utan a fokusz a SZOVEGMEZORE kerul
+     (300 ms kesleltetessel), nem az Igen gombra. iOS VoiceOverrel a
+     fokuszalt elem bemondasa a megbizhato ut; az aria-live regio
+     bemondasat a fokuszvaltas gyakran elnyomta -- ezert nem hallottad
+     a kodot, csak balra lepkedve. Most ezt kell hallanod:
+       (rovid sipolas) "Kód beolvasva, 11 karakter." majd
+       "A beolvasott kód szövege, A0001-23SSI, csak olvasható
+        szövegmező, Újabb kód felismerés, igen vagy nem?"
+     Jobbra huzva: a kerdes, "Nem...", "Igen...", "Másolás...".
+     A readonly szovegmezo iOS-en nem hozza fel a billentyuzetet.
+  3. HANGJELZES: 1,2 mp-rol 0,35 mp-re rovidult, es a BEEP_ON = false
+     beallitassal teljesen kikapcsolhato. Nincs bizonyitek arra, hogy a
+     Web Audio hang BLOKKOLNA a VoiceOver beszedet (iOS a sajat
+     beszedet a lap hangja fole keveri, "ducking"-gal halkitja a lapot),
+     de a hosszu hang ELFEDHETTE a bemondas elejet. A rovid hang a 300
+     ms-os fokuszkesleltetes alatt lecseng.
+  Ha a 2. pont utan sem hallod a kodot: BEEP_ON = false, es ha ugy sem,
+  a show() 300 ms-at emeld 600-ra.
+
+SEBESSEG -- A LAP TETEJEN ALLITHATO (JELENLEG KIKOMMENTEZVE)
   A "Sebesseg" gomb harom allast jar korbe:
       Normal   2000 ms-onkent   (alapertelmezes -- "par masodpercenkent")
       Lassu    5000 ms-onkent
@@ -107,6 +130,24 @@ JAVITAS -- A SZOVEGDOBOZ FELOLVASASA
        a kamera kikapcsolása, gomb"
   A diagnosztikai sor ("15 karakter · jsQR (külön szálon)") csak
   lathato, nem hallhato.
+
+NATIV OLVASO ANDROIDON (0. lepcso)
+  Android Chrome-ban (es a Chromium-alapu bongeszokben: Samsung
+  Internet, Edge, Brave) letezik a BarcodeDetector API: a Google ML Kit
+  natív, hardveresen gyorsitott QR-olvasoja, gyenge fenyben is jo.
+  A worker ezt probalja ELOSZOR, de csak ha (1) letezik, (2) a
+  getSupportedFormats() tartalmazza a 'qr_code'-ot, (3) a detect() nem
+  dob hibat -- az elso hibanal vegleg kikapcsol. iPhone-on (minden
+  bongeszo WebKit) az API nincs, ezert ott a lepcso 0 ms alatt atugrik,
+  es minden pontosan ugy fut, mint eddig.
+  TESZTELVE 5 helyzetben (ugyanaz a worker, Chromium 141, 100 kep):
+    nincs API / van, de nem tud QR-t / van, de hibat dob / van, de ures
+    eredmenyt ad: mind a negy esetben 97/100 ZXing-gel, a kesleltetes
+    azonos (4-7 ms), konzolhiba nincs -- azaz iPhone-on NEM zavar.
+    van es mukodik (szimulalt): a 0. lepcso ad 60/60-at jo fenyben,
+    gyenge fenyben a ZXing veszi at; osszesitve ugyanaz a 97/100.
+  Valodi androidos telefonon a talalati panel "natív (ML Kit)"
+  felirata mutatja, hogy a natív olvaso dolgozott.
 
 ROSSZ FENYVISZONYOK -- MIERT JOBB A QRbot, ES MIT TETTUNK ERTE
   A QRbot azert ismer fel sotetben szinte azonnal, mert a natív
