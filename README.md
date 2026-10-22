@@ -1,1 +1,226 @@
-# zebmyqr
+QR OLVASO -- ONHORDO WEBLAP
+===========================
+
+MI EZ
+  Egyetlen weblap, ami a telefon kameraval PAR MASODPERCENKENT QR kodot
+  keres. Ha talal:
+    - megszolal egy 440 Hz-es hang (1,2 masodperc)
+    - a kod tartalma megjelenik egy szovegdobozban
+    - megkerdezi: "Újabb kód felismerés, igen vagy nem?"
+        Igen -> a kereses folytatodik
+        Nem  -> a kereses leall es a kamera kikapcsol
+    - kepernyoolvasoval: "Kód beolvasva, N karakter: <tartalom>.
+      Újabb kód felismerés, igen vagy nem?" majd a fokusz az Igen gombon.
+
+JAVITOTT HIBAK (2026-10-19)
+  1. A hangjelzes SOHA nem szolt: a BEEP_HZ / BEEP_SEC / BEEP_VOL
+     allandok hianyoztak, a beepStart() ReferenceError-t dobott, amit a
+     try/catch elnyelt. Potolva.
+  2. iOS-en a hang akkor sem szolt volna, ha az allandok megvannak: az
+     AudioContext a kamera-engedely utan (nem gesztusbol) jott letre,
+     "suspended" allapotban, es az audioUnlock() a kesobbi koppintasnal
+     azonnal visszatert, nem hivta a resume()-ot. Javitva.
+  3. A talalati panel mindig "jsQR"-t irt, akkor is, ha a ZXing talalt.
+  4. A fo szal minden vizsgalatnal a TELJES kepkockat is kimasolta
+     (getImageData), de soha nem hasznalta fel. Torolve.
+  5. A Lámpa gomb iPhone-on sosem jelent meg, mert a getCapabilities()
+     nem jelenti a torch-ot, pedig az applyConstraints iOS 17 ota tud.
+     Most a gomb mindig latszik, es ha a bekapcsolas elutasitasra
+     kerul, a lap bemondja es elrejti.
+  6. Ha a worker nem tolthetett be (pl. file:// utvonal), a lap csendben
+     "Keresés…"-t mutatott orokre. Most hibat mond.
+  7. A fokusz az "Igen" gombra 150 ms keslelteteessel kerul: iOS
+     VoiceOver az eppen lathatova valt elemre adott azonnali focus()-t
+     gyakran eldobja.
+  8. Tab a nyitott panelen belul korbejar (fokuszcsapda); Esc = Igen.
+  9. A fejlec egy nem letezo lib/zxing-library.min.js-re es egy
+     "negy ut" dekodolasra hivatkozott; a leiras a valosagot tukrozi.
+
+A MAPPA TARTALMA
+  qr-olvaso.html            a weblap (fo szal: csak a felulet)
+  lib/decoder-worker.js     a dekodolo, KULON SZALON
+  lib/zxing-wasm-reader.js  ZXing (zxing-cpp) betolto -- FO dekodolo
+  lib/zxing_reader.wasm     a ZXing WebAssembly binarisa (1,1 MB)
+  lib/jsQR.js               jsQR -- tartalek dekodolo
+  robots.txt                a keresok kizarasa
+
+MIERT WEB WORKER? -- EZ A LEGFONTOSABB
+  Az elozo valtozatok hasznalhatatlanok voltak VoiceOverrel: a kamera
+  engedelyezese utan minden elnemult, a gombokat nem lehetett
+  megnyomni, a kepernyo mintha zarolva lett volna.
+
+  Az ok: a QR-dekodolas SZINKRON es lassu (merve: 58 ms tiszta kepen,
+  akar 1000 ms mintas hatteren), es a fo szalon futott. Az MDN igy
+  fogalmaz: "a hosszan futo JavaScript-fuggvenyek blokkoljak a szalat,
+  ami valaszkeptelen laphoz vezet... hacsak nem hasznalsz szandekosan
+  web workert, a JavaScript a fo szalon fut, igy konnyen kesleltetheti
+  az esemenyfeldolgozast".
+
+  A fo szal ugyanaz, amelyik a koppintasokat kezeli ES amelyiken a
+  VoiceOver dolgozik a lappal. Ha az foglalt, se a gomb nem mukodik,
+  se a felolvasas.
+
+  MOST: a dekodolas a lib/decoder-worker.js-ben, KULON SZALON fut.
+  A fo szal csak atadja a kepkockat (transfer, tehat meg masolas
+  sincs), es azonnal visszater. Vegig valaszkepes marad.
+
+SEBESSEG -- A LAP TETEJEN ALLITHATO
+  A "Sebesseg" gomb harom allast jar korbe:
+      Normal   2000 ms-onkent   (alapertelmezes -- "par masodpercenkent")
+      Lassu    5000 ms-onkent
+      Gyors     500 ms-onkent
+  A gomb a lap tetejen van, Tab-bal elsok kozott elerheto.
+
+HTTPS KELL -- MINDEN BONGESZOBEN
+  A kamerahozzaferes (getUserMedia) csak "biztonsagos kornyezetben"
+  mukodik: https:// vagy http://localhost. Ez NEM Safari-sajatossag:
+  a Chrome, a Firefox es az Edge is igy mukodik. iPhone-on a Firefox
+  es a Chrome ugyanugy HTTPS-t kovetel.
+  Egy "file://" utvonalon megnyitott HTML NEM kap kamerat.
+
+  FONTOS: a Web Worker sem tolthetó be file:// utvonalrol! A lapot
+  MINDENKEPPEN kiszolgalorol kell megnyitni.
+
+GOMBOK
+  "Sebesség: ..."                    a lap tetejen, a vizsgalati koz
+  "Másolás"                          a szoveg a vagolapra
+  "Felismerés folytatása"            a panel bezarul, a kereses megy tovabb
+  "Felismerés megszakítása, bezárás" a KAMERA IS kikapcsol
+  "Felismerés indítása"              ujraindit a megszakitas utan
+  Esc billentyu = "Felismerés folytatása"
+
+JAVITAS -- A SZOVEGDOBOZ FELOLVASASA
+  Korabban a szovegdoboz aria-describedby-jal a diagnosztikai szovegre
+  mutatott, ezert a kepernyoolvaso a kod utan felolvasta, hogy
+  "jsQR külön szálon, 15 karakter". Ez semmit nem mondott a kodrol.
+  JAVITAS: a diagnosztikai sor aria-hidden, tehat csak a szemnek szol.
+
+  AMIT MOST A VOICEOVER BEMOND:
+    elo regio:  "Kód beolvasva, 15 karakter: TESZT-KOD-00042"
+    a panelen vegigmenve:
+      "A beolvasott kód tartalma"                      (cim)
+      "A beolvasott kód szövege, TESZT-KOD-00042,
+       csak olvasható szövegmező"
+      "Másolás a vágólapra, gomb"
+      "Felismerés folytatása, a hang leállítása, gomb"
+      "Felismerés megszakítása, bezárás,
+       a kamera kikapcsolása, gomb"
+  A diagnosztikai sor ("15 karakter · jsQR (külön szálon)") csak
+  lathato, nem hallhato.
+
+ROSSZ FENYVISZONYOK -- MIERT JOBB A QRbot, ES MIT TETTUNK ERTE
+  A QRbot azert ismer fel sotetben szinte azonnal, mert a natív
+  kamera API-hoz fer hozza: allitja a fokuszt, az expozíciót, es be
+  tudja kapcsolni a lampát. A bongeszo ebbol keveset enged.
+  Amit meg tudtunk tenni:
+
+  1. ZXing (zxing-cpp) A FO DEKODOLO -- ez a legnagyobb nyereseg
+     A ZXing HybridBinarizer-t hasznal: a kepet kis blokkokra osztja,
+     es MINDEN BLOKKHOZ KULON szamol fekete-feher hatart. Ezert birja
+     az egyenetlen megvilagitast (arnyek, egyoldali feny, sotet).
+     A jsQR ezzel szemben az EGESZ kepre EGY hatart szamol -- ezert
+     bukik el hamar rossz fenyben.
+     A worker eloszor a ZXinget probalja, es csak ha az nem talal,
+     akkor a jsQR-t.
+     A tryHarder + tryRotate bekapcsolva: lassabb, de sokkal tobbet
+     talal meg rossz fenyben es ferden.
+
+     UJ: GYENGE-FENY ELOFELDOLGOZAS A WORKERBEN
+     Ha a nyers kepen nincs talalat: fenyero-nyujtas (1..99 percentilis
+     -> 0..255), majd 3x3-as atlagolas 1, 2 es 3 menetben (a szenzorzaj
+     ellen), majd ket egymas utani kepkocka atlaga (idobeli zajszures),
+     vegul jsQR. Merve a qrgrid.c 18 mm-es cimkeivel, 20 cimke/jelenet,
+     Chromiumban, a valodi workerrel:
+        jo feny, 1/5 feny + zaj, egyoldali feny, elmosott, 25 fokkal
+        forgatott, tavoli (110 px):           20/20 mind a ket valtozat
+        1/10 feny + eros zaj:                 REGI 0/20 -> UJ 17/20
+     A tipikus talalati ido 4-6 ms, a legrosszabb lepcso ~200 ms --
+     mindez kulon szalon, a felulet nem erzi.
+
+  2. LAMPA GOMB (torch)
+     Ha a keszulek tamogatja, a lap tetejen megjelenik a "Lámpa" gomb.
+     Ez a leggyorsabb megoldas sotetben.
+     iOS 17 ota a Safari is tudja (applyConstraints torch:true), de a
+     getCapabilities() nem jelenti -- ezert a gomb mindig latszik, es
+     ha a keszulek elutasitja, a lap bemondja es elrejti.
+
+  3. KAMERABEALLITASOK
+     focusMode: continuous        folyamatos autofokusz
+     exposureMode: continuous     folyamatos expozicio
+     whiteBalanceMode: continuous folyamatos feherEgyensuly
+     Ezek "ideal" kerések: ha a bongeszo nem tudja, nem hibazik.
+
+  AMIT NEM TUDUNK MEGTENNI
+     A bongeszo nem enged hozzafernünk a nyers kamerajelhez, a
+     zaj csokkenteshez, a hosszabb expozicios idohoz. Ezekben a
+     natív alkalmazasok (QRbot) mindig elonyben lesznek.
+     Ha sotetben kell dolgozni es van QRbot, azt hasznald.
+
+MODALIS IZOLACIO -- MIT HALL A FELHASZNALO TALALATKOR
+  Amig a talalati panel nyitva van, a lap TOBBI resze nem letezik a
+  kepernyoolvaso szamara: se a sebessegvalto, se a statuszsav, se a
+  kamerakep, se a karakterszam. Csak ez:
+
+     bemondas:  "Kód beolvasva, 15 karakter: TESZT-KOD-00042"
+     1. "A beolvasott kód tartalma"                         (cim)
+     2. "A beolvasott kód szövege, TESZT-KOD-00042,
+         csak olvasható szövegmező"
+     3. "Felismerés folytatása, a hang leállítása, gomb"
+     4. "Másolás a vágólapra, gomb"
+     5. "Megszakítás, a felismerés leállítása és a kamera
+         kikapcsolása, gomb"
+
+  A panel nyitva allapotaban a kepernyoolvaso PONTOSAN negy elemet
+  talal: a kod szoveget, a "Felismerés folytatása", a "Másolás" es a
+  "Megszakítás" gombot. A sebessegvalto es a lampa gomb ilyenkor
+  inert (kikerul a fokuszsorrendbol ES a felolvaso fajabol is).
+
+  A "Felismerés folytatása" KOZVETLENUL a kod szovege utan all, mert
+  az a leggyakoribb muvelet. A masik ket gomb utana kovetkezik:
+  elerhetok maradnak (kulonben hasznalhatatlanok lennenek), de nem
+  szolnak bele az elso ket bemondasba.
+
+  A panel bezarasa utan minden visszaall, es a nem lathato panelek
+  ("Felismerés indítása", "Nincs kamerakép") sem talalhatok meg.
+
+AKADALYMENTESSEG (WCAG 2.2)
+  - <h1>/<h2> cimsorok, <label> a szovegdobozhoz
+  - a talalatot aria-live="polite" regio mondja be (NEM assertive:
+    az megszakitana a folyamatban levo felolvasast)
+  - a sebessegkijelzo aria-hidden: egy masodpercenkent valtozo szam
+    SOHA nem lehet elo regio, mert folyamatosan felbeszakitja magat
+  - a szovegdoboz readonly (NEM disabled): igy fokuszalhato es
+    felolvashato
+  - lathato fokuszkeret, 48x48 px-es gombok
+  - kontrasztaranyok: 4,91:1 -- 18,10:1 (WCAG 1.4.3: 4,5 kell)
+  - WCAG 1.4.2: a 3,5 mp-es hangot mindket also gomb leallitja
+
+TESZTELVE (valodi Chromium 141, Playwright, hamis kamera y4m videoval,
+           iPhone-os user agent, 390x844)
+  - a qrgrid.c sablon cimkei 7 jelenetben (jo feny, gyenge feny, nagyon
+    gyenge feny, egyoldali feny, elmosott, forgatott, tavoli): a
+    dekodolo worker 20/20, 20/20, 17/20, 20/20, 20/20, 20/20, 20/20
+  - vegig a lapon: kamera -> talalat 2,3 mp-en belul -> bemondas ->
+    fokusz az Igen gombon -> Igen: kereses folytatodik -> Nem: kamera
+    leall (srcObject null), fokusz az ujrainditas gombon -> ujrainditas
+  - ARIA-fa a nyitott panelnel: dialog + cim + szovegmezo + kerdes +
+    Igen/Nem csoport + Masolas; semmi mas
+  - hangjelzes: az oszcillator minden talalatnal letrejon
+  - konzolhiba: nincs
+  A valodi iPhone + VoiceOver probat ez NEM potolja: azt a te kezedben
+  kell elvegezni (lasd lent).
+
+VOICEOVER PROBA IPHONE-ON -- MIT KELL HALLANOD
+  1. Lap megnyitasa (HTTPS!): "QR-kód olvasó, címsor" ... "Sebesség:
+     Normál, gomb". A kamerakep es a statuszsav NEM hallhato.
+  2. Cimke a kamera ele: sipolas, majd: "Kód beolvasva, 11 karakter:
+     A0001-23SSI. Újabb kód felismerés, igen vagy nem?" majd
+     "Igen, újabb kód felismerése, a keresés folytatódik, gomb".
+  3. Jobbra huzva: "Nem, ...", "Másolás a vágólapra, gomb". Balra:
+     a kerdes, a szovegmezo a koddal, a cim. Tovabb balra semmi: a lap
+     tobbi resze inert.
+  4. Dupla koppintas az Igen-en: "Keresés folytatódik."
+  5. Nem: "A felismerés leállítva, a kamera kikapcsolva." es a fokusz
+     a "Felismerés indítása" gombon.
+  Ha a 2. pontban a fokusz nem ugrik az Igen gombra, a show() 150 ms-os
+  keslelteteset emeld 300-ra.

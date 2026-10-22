@@ -1,0 +1,84 @@
+A QR OLVASO FELTOLTESE GITHUB PAGES-RE
+======================================
+
+MIERT GITHUB PAGES
+  A kamerahoz (getUserMedia) HTTPS kell, a Web Workerhez kiszolgalo.
+  A GitHub Pages mindkettot adja, ingyen, karbantartas nelkul, es a
+  cim evekig ugyanaz marad. Nincs szerver, nincs adatbazis: a lap
+  statikus, SEMMIT nem kuld el sehova -- a kamerakep es a beolvasott
+  kod a telefonon marad.
+
+LEPESEK (a GitHub webes feluleten, parancssor nelkul)
+  1. Jelentkezz be a github.com-ra, jobb felul "+" -> "New repository".
+       Repository name:  valami kitalalhatatlan, pl.  qr-7f3a9c
+                         (a cim resze lesz: NEVED.github.io/qr-7f3a9c/)
+       Public            (a Pages ingyenes valtozata csak publikus
+                          tarolonal mukodik; a robots.txt miatt a
+                          keresok nem indexelik, de aki tudja a cimet,
+                          eleri -- ne tegyel bele semmi bizalmasat)
+       NE pipald be az "Add a README" opciot (ures tarolo kell).
+       "Create repository".
+  2. A megjelent oldalon: "uploading an existing file" link.
+     Huzd be a MAPPA TARTALMAT, a szerkezet megtartasaval:
+       qr-olvaso.html
+       robots.txt
+       lib/decoder-worker.js
+       lib/jsQR.js
+       lib/zxing-wasm-reader.js
+       lib/zxing_reader.wasm        (1,1 MB -- a 25 MB-os limit alatt)
+     A bongeszos feltolto a mappat is viszi, ha a "lib" mappat huzod
+     be. Ha nem, elobb a 4 lib-fajlt toltsd fel, es a fajlnev ele ird:
+     "lib/decoder-worker.js" -- a GitHub ebbol mappat csinal.
+     Lent "Commit changes".
+  3. Settings (a tarolo fulsoran) -> bal oldalt "Pages".
+       Source: "Deploy from a branch"
+       Branch: "main", mappa "/ (root)"  -> Save.
+  4. 1-2 perc mulva a Pages oldal tetejen megjelenik a cim:
+       https://NEVED.github.io/qr-7f3a9c/
+     A lap cime:
+       https://NEVED.github.io/qr-7f3a9c/qr-olvaso.html
+     (Ha a fajlt index.html-re nevezed at, a rovid cim is eleg.)
+  5. iPhone-on nyisd meg Safariban, engedelyezd a kamerat, majd a
+     Megosztas gomb -> "Hozzaadas a Fokepernyohoz". Igy ikonkent indul,
+     teljes kepernyon, es a kameraengedelyt megjegyzi.
+
+MIRE KELL FIGYELNI
+  - A TELJES mappa kell, a lib/ almappaval. Ha a .wasm hianyzik, a
+    ZXing nem indul, es csak a jsQR dolgozik (gyengebb sotetben); a lap
+    ezt a "ZXing + jsQR" felirat hianyaval jelzi a fejlecben.
+  - MIME tipus: a GitHub Pages a .wasm fajlt helyesen
+    "application/wasm"-kent adja, a .js-t "text/javascript"-kent.
+    Mas tarhelynel (sajat Apache/nginx) ezt ellenorizd -- rossz MIME
+    tipusnal a WebAssembly.instantiateStreaming hibat ad.
+  - Nagybetu/kisbetu: a GitHub Pages Linux, tehat "lib/jsQR.js" es
+    "lib/jsqr.js" KET KULON fajl. A worker "jsQR.js"-t ker -- ugy
+    toltsd fel.
+  - Frissites utan a telefon a REGI valtozatot mutathatja (gyorsitotar).
+    Safariban: Beallitasok -> Safari -> Elozmenyek es webhelyadatok
+    torlese, vagy a cim vegere ?v=2 -- de a worker es a wasm is
+    gyorsitotarazhato. Biztos modszer: a lib-fajlok nevebe tegyel
+    verziot (decoder-worker-v2.js), es a HTML-ben is ird at.
+  - Kamera csak HTTPS-en: a github.io cim az. Ha a sajat domainedet
+    kotod ra (Settings -> Pages -> Custom domain), ott "Enforce HTTPS"
+    legyen bepipalva.
+  - A robots.txt a gyokerben van, es "Disallow: /"-t mond: a keresok
+    nem indexelik. Ez NEM biztonsag: a cim ismeroje eleri.
+  - Ne tegyel a tarolóba semmi mast (kodlistat, PDF-eket): minden
+    feltoltott fajl publikus.
+  - A GitHub Pages ingyenes keretei: 1 GB tarolo, 100 GB/ho forgalom,
+    havi 10 build -- egy 1,5 MB-os lapnal ez eszrevehetetlen.
+
+HA VALAMI NEM MEGY
+  - "Nincs kamerakep": nem HTTPS cim, vagy a Safari kameraengedelye
+    tiltva (Beallitasok -> Safari -> Kamera -> Kerdezzen/Engedelyez).
+  - "Hiba: a dekodolo nem tolthető be": a lib/ mappa hianyzik vagy
+    rossz helyen van. Nyisd meg kozvetlenul:
+    https://NEVED.github.io/qr-7f3a9c/lib/decoder-worker.js -- ha 404,
+    rossz az utvonal.
+  - Mukodik asztali gepen, de nem telefonon: toroljd a telefon
+    gyorsitotarat (lasd fent).
+
+FRISSITES KESOBB
+  A tarolo oldalan a fajlra kattintva a ceruza ikon szerkeszt, vagy
+  "Add file -> Upload files" felulirja. Minden commit utan a Pages
+  1-2 perc alatt ujraepul.

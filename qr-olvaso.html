@@ -10,12 +10,13 @@
   ===================================================================
 
   MUKODES
-    A kamera kepet folyamatosan vizsgalja. Ha sikerul dekodolni:
-      - megszolal egy 440 Hz-es hang (alapbeallitas: 3,5 masodperc)
-      - a keszulek rezeg egyet
+    A kamera kepet PAR MASODPERCENKENT vizsgalja (alapertelmezes: 2 mp,
+    a lap tetejen allithato). Ha sikerul dekodolni:
+      - megszolal egy 440 Hz-es hang (alapbeallitas: 1,2 masodperc)
       - a kod tartalma megjelenik egy szovegdobozban
-    Az OK gomb megnyomasa a hangot azonnal elhallgattatja, a doboz
-    eltunik, es a kereses folytatodik.
+      - a lap MEGKERDEZI: "Újabb kód felismerés, igen vagy nem?"
+          Igen  -> a panel bezarul, a kereses folytatodik
+          Nem   -> a kereses leall, a KAMERA IS kikapcsol
     A hang frekvenciaja, hossza es hangereje a szkript elejen allithato
     (BEEP_HZ, BEEP_SEC, BEEP_VOL).
 
@@ -39,37 +40,30 @@
     KULON SZALON (Web Worker) tortenik -- a fo szal csak atadja a
     kepkockat, es vegig valaszkepes marad.
 
-  MELYIK DEKODOLOT HASZNALJA ES MIERT
-    A merések (117 kodos A4 lapok, tobbfele torzitas, 4 felismero)
-    ezt a sorrendet adtak:
-      1. WeChat CNN     85-90%   -- bongeszoben nem elerheto
-      2. ZXing (C++)    76-83%   -- ITT: zxing-wasm, UGYANAZ a motor
-      3. ZBar           75-78%   -- bongeszoben nem elerheto
-      4. OpenCV ArUco   67-71%   -- nem relevans telefonon
-    Ezert a fajl NEGY utat probal, ebben a sorrendben:
-      A) zxing-wasm -- a zxing-cpp WebAssemblyre forditva. PONTOSAN az
-         a motor, amivel a mereseimet vegeztem, es majdnem natív
-         sebesseggel fut. Ez a fo dekodolo.
-      B) natív BarcodeDetector -- FIGYELEM: a Safari, es igy MINDEN
-         iOS-es bongeszo (mert azok is WebKit-re epulnek) NEM tamogatja.
-         iPhone-on ez az ag sosem fut le. Androidos Chrome-ban igen.
-      C) ZXing-js -- tiszta JavaScript ZXing, tartalek.
-      D) jsQR     -- mas algoritmus, vegso tartalek.
-    Ha az egyik nem talal, a masik meg talalhat.
-
-  ELOFELDOLGOZAS
-    A meresek szerint a szuk quiet zone-os kodoknal sokat segit, ha a
-    kepet tobb meretben es kontraszttal is megprobaljuk. A fajl minden
-    kepkockan negy valtozatot probal: eredeti, kontrasztnovelt,
-    kicsinyitett, es kozepre vagott (nagyitott).
+  MELYIK DEKODOLOT HASZNALJA ES MIERT  (lib/decoder-worker.js)
+    1. zxing-wasm 3.1.3 (zxing-cpp WebAssemblyre forditva) -- FO motor.
+       HybridBinarizer: blokkonkenti, helyi kuszoboles, ezert az
+       egyoldali fenyt es az arnyekot magatol birja. tryHarder+tryRotate.
+    2. GYENGE FENY: ha a nyers kepen nem talal, a worker fenyero-
+       nyujtast (1..99 percentilis -> 0..255) es 3x3-as atlagolast
+       (1, 2, 3 menet) alkalmaz, majd ket egymas utani kepkocka atlagat
+       is megprobalja (idobeli zajszures). Merve, 20 cimke/jelenet, a
+       qrgrid.c 18 mm-es cimkeivel, Chromiumban:
+         jo feny / 1/5 feny+zaj / egyoldali feny / elmosott / 25 fokkal
+         elforgatott / tavoli (110 px):  20/20 mindegyik
+         1/10 feny + eros zaj:  regi worker 0/20  ->  uj worker 17/20
+    3. jsQR -- mas algoritmus, vegso tartalek.
+    A natív BarcodeDetector NEM hasznalhato: a Safari 17..27 csak
+    kapcsolo mogott tudja, alapbol kikapcsolva; iPhone-on minden
+    bongeszo WebKit, tehat ott sosem elerheto.
 
   ONHORDO VALTOZAT
     Ez a mappa mindent tartalmaz, ami a mukodeshez kell -- nincs
     internetkapcsolat-igeny a konyvtarakhoz:
       qr-olvaso.html            ez a fajl
       robots.txt                a keresok kizarasa
+      lib/decoder-worker.js     a dekodolo (kulon szalon)
       lib/jsQR.js               jsQR dekodolo
-      lib/zxing-library.min.js  ZXing JavaScript valtozat
       lib/zxing-wasm-reader.js  zxing-cpp WebAssembly betolto
       lib/zxing_reader.wasm     a WebAssembly binaris (1,1 MB)
     A teljes mappat kell feltolteni, a szerkezet megtartasaval.
@@ -166,7 +160,7 @@
   <button id="torch" type="button" class="topbtn topbtn2" aria-pressed="false"
           style="display:none">Lámpa<span class="sr-only">, a készülék lámpájának be- és kikapcsolása sötétben</span></button>
 
-  <button id="speed" type="button" class="topbtn">Sebesség: Gyors<span class="sr-only">. Koppints a váltáshoz: gyors, közepes vagy lassú. A lassú beállítás képernyőolvasóhoz való.</span>
+  <button id="speed" type="button" class="topbtn">Sebesség: Normál<span class="sr-only">. Koppints a váltáshoz: normál, lassú vagy gyors. A vizsgálat két, öt vagy fél másodpercenként történik.</span>
   </button>
 
   <div id="bar">
@@ -190,7 +184,7 @@
        CSAK a kod szoveget es a gombokat talalja meg. A sebesseg, a
        statusz es a kamerakep ilyenkor nem letezik szamara. -->
   <div id="panel" role="dialog" aria-modal="true"
-       aria-labelledby="panel-cim">
+       aria-labelledby="panel-cim" aria-describedby="kerdes">
     <h2 id="panel-cim" class="sr-only">A beolvasott kód tartalma</h2>
     <!-- MIERT textarea es nem <output> vagy <p>?
          Mert igy a szoveg kijelolheto es masolhato -- ez a fo cel.
@@ -209,22 +203,23 @@
          15 karakter". Ez zavaro volt es semmit nem mondott a kodrol.
          Most aria-hidden: csak a szemnek szol. -->
     <p id="meta" aria-hidden="true"></p>
-    <!-- A SORREND SZANDEKOS: a kod szovege utan AZONNAL a
-         "Felismerés folytatása" kovetkezik, mert az a leggyakoribb
-         muvelet. A masik ket gomb utana all: elerhetok maradnak, de
-         nem szolnak bele az elso ket bemondasba.
-         WCAG 1.4.2: a 3,5 mp-es hangot mindharom gomb leallitja. -->
-    <div class="row">
+    <!-- A KERDES. Ez a <p> a dialogus aria-describedby-ja, ezert a
+         VoiceOver a cim utan ezt is bemondja, es a fokusz az "Igen"
+         gombra kerul. A ket valaszgomb egy "group"-ban van, a csoport
+         neve a kerdes -- igy a gombokra lepve a kerdes is elhangzik.
+         WCAG 1.4.2: a hangot mindharom gomb leallitja. -->
+    <p id="kerdes">Újabb kód felismerés, igen vagy nem?</p>
+    <div class="row" role="group" aria-labelledby="kerdes">
       <button id="go" type="button">
-        Felismerés folytatása<span class="sr-only">, a hang leállítása</span>
+        Igen<span class="sr-only">, újabb kód felismerése, a keresés folytatódik</span>
+      </button>
+      <button id="stop" class="sec" type="button">
+        Nem<span class="sr-only">, a felismerés leállítása és a kamera kikapcsolása</span>
       </button>
     </div>
     <div class="row">
       <button id="copy" class="sec" type="button">
         Másolás<span class="sr-only"> a vágólapra</span>
-      </button>
-      <button id="stop" class="sec" type="button">
-        Megszakítás<span class="sr-only">, a felismerés leállítása és a kamera kikapcsolása</span>
       </button>
     </div>
   </div>
@@ -266,13 +261,21 @@
      VoiceOver zavartalanul beszel.
      =================================================================== */
   var SPEEDS = [
-    { name: 'Gyors',  ms: 150,   say: 'gyors, másodpercenként több vizsgálat' },
-    { name: 'Közepes',ms: 1000,  say: 'közepes, másodpercenként egy vizsgálat' },
-    { name: 'Lassú',  ms: 10000, say: 'lassú, tíz másodpercenként egy vizsgálat, képernyőolvasóhoz' }
+    { name: 'Normál', ms: 2000, say: 'normál, két másodpercenként egy vizsgálat' },
+    { name: 'Lassú',  ms: 5000, say: 'lassú, öt másodpercenként egy vizsgálat' },
+    { name: 'Gyors',  ms: 500,  say: 'gyors, másodpercenként két vizsgálat' }
   ];
-  var speedIdx = 0;
+  var speedIdx = 0;                  /* alapertelmezes: Normal, 2 mp */
   var SCAN_MS = SPEEDS[0].ms;
   var scanTimer = null;
+
+  /* HANGJELZES talalatkor. A frekvencia Hz-ben, a hossz masodpercben,
+     a hangero 0..1 kozott. Ezek KORABBAN HIANYOZTAK a fajlbol: a
+     beepStart() ReferenceError-t dobott, amit a try/catch elnyelt,
+     ezert SOHA nem szolt a hang. */
+  var BEEP_HZ  = 440;
+  var BEEP_SEC = 1.2;
+  var BEEP_VOL = 0.25;
 
   /* ===================================================================
      UJRA-FELISMERES ELLENI VEDELEM
@@ -293,7 +296,14 @@
   var actx = null, beepOsc = null, beepGain = null;
 
   function audioUnlock() {
-    if (actx) return;
+    /* Ha a kontextus mar letezik, de "suspended" (iOS-en igy jon letre,
+       ha nem felhasznaloi gesztusbol hoztuk letre), akkor ITT, a
+       koppintasbol kell feloldani. Korabban a fuggveny ilyenkor azonnal
+       visszatert, es a hang soha nem szolalt meg. */
+    if (actx) {
+      if (actx.state === 'suspended') { try { actx.resume(); } catch (e) {} }
+      return;
+    }
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     try {
@@ -403,31 +413,36 @@
       var m = ev.data || {};
       if (m.type === 'result') {
         workerBusy = false;
-        if (m.text && accept(m.text)) { hits++; show(m.text, 'jsQR (külön szálon)'); }
+        /* m.how: melyik lepcso talalta meg (ZXing, ZXing+nyújtás, jsQR).
+           Korabban ide fixen "jsQR" volt irva, akkor is, ha a ZXing
+           dolgozott. */
+        if (m.text && accept(m.text)) { hits++; show(m.text, m.how || '?'); }
         scans++;
       }
     };
-    worker.onerror = function () { worker = null; };
+    worker.onerror = function (e) {
+      /* Korabban csendben null lett a worker, es a lap "Keresés…"-t
+         mutatott a vegtelensegig. Most szolunk. */
+      worker = null;
+      status.textContent = 'Hiba: a dekódoló nem tölthető be';
+      announce.textContent = 'Hiba: a dekódoló nem tölthető be. A lapot kiszolgálóról, HTTPS címen kell megnyitni.';
+    };
   } catch (e) { worker = null; }
 
   function grab() {
     if (!cx) return null;                 // nincs hasznalhato vaszon
     var w = video.videoWidth, h = video.videoHeight;
     if (!w || !h) return null;
-    /* teljes kep, legfeljebb 480 px szeles. A merés szerint a
-       dekodolas koltsege a kepterulettel no, es 480 px-en a 15 mm-es
-       QR meg boven eleg reszletes. */
-    var s = Math.min(1, 480 / w);
-    cv.width = Math.round(w * s); cv.height = Math.round(h * s);
-    cx.drawImage(video, 0, 0, cv.width, cv.height);
-    var full = cx.getImageData(0, 0, cv.width, cv.height);
-    // kozepso negyzet kinagyitva: a kereten belul levo kodhoz
+    /* CSAK a kozepso, a keretben levo 70%-os negyzetet adjuk at,
+       480x480 px-re meretezve. (Korabban a teljes kepkocka is ki lett
+       masolva getImageData-val, de soha nem lett felhasznalva -- ez
+       feleslegesen terhelte a fo szalat.) A 21 modulos, 18 mm-es cimke
+       10-15 cm-rol a keret feleben is 8-10 px/modul. */
     var side = Math.round(Math.min(w, h) * 0.70);
     var sx = Math.round((w - side) / 2), sy = Math.round((h - side) / 2);
     cv.width = 480; cv.height = 480;
     cx.drawImage(video, sx, sy, side, side, 0, 0, 480, 480);
-    var center = cx.getImageData(0, 0, 480, 480);
-    return { full: full, center: center };
+    return cx.getImageData(0, 0, 480, 480);
   }
 
   /* ===================================================================
@@ -518,12 +533,14 @@
        kepernyoolvaso befejezi az eppen folyo mondatot. */
     /* A bemondas SZOROSAN a kod tartalma, semmi mas. A hosszt is
        elmondjuk, mert kepernyoolvasoval nem lathato a doboz merete. */
-    announce.textContent = 'Kód beolvasva, ' + text.length + ' karakter: ' + text;
+    /* A bemondas: a kod tartalma, majd a kerdes. A fokusz az "Igen"
+       gombra kerul, tehat a VoiceOver ezutan azt mondja: "Igen, újabb kód
+       felismerése..., gomb" -- a kerdes es a valasz egyutt hangzik el. */
+    announce.textContent = 'Kód beolvasva, ' + text.length + ' karakter: ' + text +
+                           '. Újabb kód felismerés, igen vagy nem?';
     lastText = text;
     out.value = text;
-    /* A dekodolo neve fejlesztoi adat: a felso, aria-hidden statuszsavba
-       kerul, nem a talalat melle. Itt csak az marad, ami a felhasznalot
-       erdekli: hany karakter a kod. */
+    /* A dekodolo neve fejlesztoi adat: csak lathato (aria-hidden). */
     meta.textContent = text.length + ' karakter  ·  ' + how;
     panel.classList.add('show');
     frame.classList.add('hit');
@@ -535,11 +552,14 @@
       /* Nem sikerult feloldani a hangot: iOS-en ehhez egy koppintas kell. */
       meta.textContent += '  ·  a hangjelzéshez koppints a képernyőre';
     }
-    /* WCAG 2.4.3 (Focus Order): a fokusz kerüljon a panelre, hogy a
-       billentyuzetes es kepernyoolvasos hasznalo azonnal ott legyen. */
-    try { goBtn.focus(); } catch (e) {}
+    /* WCAG 2.4.3 (Focus Order): a fokusz az "Igen" gombra kerul.
+       KESLELTETVE: iOS VoiceOver az eppen most lathatova valt elemre
+       azonnal hivott focus()-t gyakran eldobja (a dialogus meg nincs az
+       akadalymentessegi faban). Egy rovid varakozas utan megbizhato. */
+    setTimeout(function () { try { goBtn.focus(); } catch (e) {} }, 150);
   }
 
+  /* "Igen": a panel bezarul, a kereses folytatodik. */
   goBtn.addEventListener('click', function () {
     beepStop();
     setOutsideHidden(false);
@@ -563,27 +583,36 @@
      a keszulek tamogatja -- Android Chrome-ban altalaban igen,
      iOS Safariban jelenleg NEM. Ha nincs, a gomb el sem jelenik meg.
      =================================================================== */
+  /* iOS 17 ota a Safari TUDJA a torch-ot applyConstraints-szel, de a
+     getCapabilities() nem mindig jelenti. Ezert a gombot MINDIG
+     megmutatjuk, ha van videosav; ha a bekapcsolas elutasitasra kerul,
+     akkor mondjuk, hogy a keszulek nem tamogatja, es elrejtjuk. */
   var torchTrack = null, torchOn = false;
   function setupTorch(stream) {
     torchTrack = null; torchOn = false;
     torchBtn.style.display = 'none';
+    torchBtn.setAttribute('aria-pressed', 'false');
+    torchBtn.firstChild.nodeValue = 'Lámpa';
     try {
       var tr = stream.getVideoTracks()[0];
-      if (!tr || !tr.getCapabilities) return;
-      var caps = tr.getCapabilities();
-      if (caps && caps.torch) { torchTrack = tr; torchBtn.style.display = ''; }
+      if (!tr || !tr.applyConstraints) return;
+      torchTrack = tr; torchBtn.style.display = '';
     } catch (e) { torchTrack = null; }
   }
   function toggleTorch() {
     if (!torchTrack) return;
-    torchOn = !torchOn;
-    torchTrack.applyConstraints({ advanced: [{ torch: torchOn }] })
+    var want = !torchOn;
+    torchTrack.applyConstraints({ advanced: [{ torch: want }] })
       .then(function () {
+        torchOn = want;
         torchBtn.setAttribute('aria-pressed', torchOn ? 'true' : 'false');
         torchBtn.firstChild.nodeValue = torchOn ? 'Lámpa be' : 'Lámpa';
         announce.textContent = torchOn ? 'Lámpa bekapcsolva.' : 'Lámpa kikapcsolva.';
       })
-      .catch(function () { torchOn = !torchOn; });
+      .catch(function () {
+        torchBtn.style.display = 'none'; torchTrack = null;
+        announce.textContent = 'A lámpát ez a böngésző vagy készülék nem támogatja.';
+      });
   }
 
   function stopAll() {
@@ -636,10 +665,17 @@
     announce.textContent = 'A szöveg a vágólapra másolva.';
   });
 
-  /* WCAG 2.1.1 (Keyboard): Esc is bezarja a panelt es leallitja a hangot */
+  /* WCAG 2.1.1 (Keyboard): Esc = "Igen" (a panel bezarul, a hang leall).
+     Tab a nyitott panelen belul korbejar (fokuszcsapda, WCAG 2.4.3):
+     a billentyuzetes hasznalo nem tud kiesni a lap rejtett reszeire. */
   document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape') return;
-    if (panel.classList.contains('show')) { goBtn.click(); }
+    if (!panel.classList.contains('show')) return;
+    if (e.key === 'Escape') { e.preventDefault(); goBtn.click(); return; }
+    if (e.key !== 'Tab') return;
+    var f = panel.querySelectorAll('button,textarea');
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
 
   function loop() {
@@ -650,10 +686,10 @@
         scanId++;
         /* A pixeltombot ATADJUK (transfer), nem masoljuk: igy a fo szal
            meg a masolassal sem tolt idot. */
-        var buf = g.center.data.buffer.slice(0);
+        var buf = g.data.buffer;
         try {
           worker.postMessage({ cmd: 'scan', id: scanId, data: buf,
-                               w: g.center.width, h: g.center.height }, [buf]);
+                               w: g.width, h: g.height }, [buf]);
         } catch (e) { workerBusy = false; }
       }
       fpsN++;
@@ -699,7 +735,7 @@
       return video.play();
     }).then(function () {
       var eng = [];
-      if (worker) eng.push('jsQR külön szálon');
+      if (worker) eng.push('ZXing + jsQR, külön szálon');
       engineEl.textContent = eng.join(' + ');
       /* A hangkimenet feloldasa: egyes bongeszokben a kamera-engedely
          megadasa is felhasznaloi gesztusnak szamit, ezert itt is
